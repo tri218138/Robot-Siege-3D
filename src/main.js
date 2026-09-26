@@ -46,6 +46,7 @@ scene.add(sunlight);
 
 const keys = {};
 const direction = new THREE.Vector3();
+let playerHP = 100;
 
 window.addEventListener("keydown", (event) => {
   keys[event.key.toLowerCase()] = true;
@@ -65,6 +66,11 @@ function animate() {
 
   direction.subVectors(player.position, enemy.position).normalize();
   enemy.position.add(direction.multiplyScalar(0.02));
+
+  if (playerHP > 0 && enemy.position.distanceTo(player.position) < 1) {
+    playerHP -= 10;
+    console.log(`HP: ${playerHP}`);
+  }
 
   renderer.render(scene, camera);
 }
