@@ -31,15 +31,30 @@ const player = new THREE.Mesh(
 player.position.y = 0.5;
 scene.add(player);
 
-const enemy = new THREE.Mesh(
-  new THREE.BoxGeometry(1, 1, 1),
-  new THREE.MeshStandardMaterial({ color: 0xff4444 }),
-);
-enemy.position.set(8, 0.5, 8);
-enemy.userData.hp = 30;
-scene.add(enemy);
+const enemies = [];
+const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
+const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
 
-const enemies = [enemy];
+function createEnemy() {
+  const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
+  enemy.userData.hp = 30;
+  return enemy;
+}
+
+function spawnEnemy() {
+  const enemy = createEnemy();
+  enemy.position.set(
+    THREE.MathUtils.randFloatSpread(20),
+    0.5,
+    THREE.MathUtils.randFloatSpread(20),
+  );
+  enemies.push(enemy);
+  scene.add(enemy);
+}
+
+spawnEnemy();
+setInterval(spawnEnemy, 2000);
+
 const bullet = new THREE.Mesh(
   new THREE.SphereGeometry(0.15, 8, 8),
   new THREE.MeshStandardMaterial({ color: 0xffcc33 }),
@@ -89,17 +104,19 @@ function animate() {
   if (keys.a) player.position.x -= 0.05;
   if (keys.d) player.position.x += 0.05;
 
-  const target = findNearestEnemy();
+  for (const enemy of enemies) {
+    direction.subVectors(player.position, enemy.position).normalize();
+    enemy.position.add(direction.multiplyScalar(0.02));
 
-  if (target) {
-    direction.subVectors(player.position, target.position).normalize();
-    target.position.add(direction.multiplyScalar(0.02));
-
-    if (playerHP > 0 && target.position.distanceTo(player.position) < 1) {
+    if (playerHP > 0 && enemy.position.distanceTo(player.position) < 1) {
       playerHP -= 10;
       console.log(`HP: ${playerHP}`);
     }
+  }
 
+  const target = findNearestEnemy();
+
+  if (target) {
     if (!bullet.visible) {
       bullet.position.copy(player.position);
       bullet.visible = true;
