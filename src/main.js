@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { clone } from "three/addons/utils/SkeletonUtils.js";
 
 const hpElement = document.querySelector("#hp");
 const coinCountElement = document.querySelector("#coin-count");
@@ -36,15 +38,22 @@ const sunlight = new THREE.DirectionalLight(0xffffff, 3);
 sunlight.position.set(5, 10, 7);
 scene.add(sunlight);
 
-const playerGeometry = new THREE.BoxGeometry(1, 1, 1);
-const localPlayerMaterial = new THREE.MeshStandardMaterial({ color: 0x4488ff });
-const remotePlayerMaterial = new THREE.MeshStandardMaterial({ color: 0x44dd88 });
 const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
 const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
 const bulletGeometry = new THREE.SphereGeometry(0.15, 8, 8);
 const bulletMaterial = new THREE.MeshStandardMaterial({ color: 0xffcc33 });
 const coinGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16);
 const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700 });
+
+const { scene: playerModel } = await new GLTFLoader().loadAsync(
+  "/models/player.glb",
+);
+const playerBounds = new THREE.Box3().setFromObject(playerModel);
+const playerSize = playerBounds.getSize(new THREE.Vector3());
+playerModel.scale.setScalar(1.8 / playerSize.y);
+playerBounds.setFromObject(playerModel);
+const playerCenter = playerBounds.getCenter(new THREE.Vector3());
+playerModel.position.set(-playerCenter.x, -playerBounds.min.y, -playerCenter.z);
 
 const playerMeshes = new Map();
 const enemyMeshes = new Map();
@@ -102,16 +111,9 @@ function renderState(state) {
   syncMeshes(
     state.players,
     playerMeshes,
-    (player) =>
-      new THREE.Mesh(
-        playerGeometry,
-        player.id === playerId ? localPlayerMaterial : remotePlayerMaterial,
-      ),
-    0.5,
+    () => clone(playerModel),
+    0,
   );
-  for (const [id, mesh] of playerMeshes) {
-    mesh.material = id === playerId ? localPlayerMaterial : remotePlayerMaterial;
-  }
   syncMeshes(
     state.enemies,
     enemyMeshes,
@@ -138,7 +140,7 @@ function renderState(state) {
     ({ sequence }) => sequence > player.lastProcessedInput,
   );
   const localPlayer = playerMeshes.get(playerId);
-  localPlayer.userData.targetPosition.set(player.x, 0.5, player.z);
+  localPlayer.userData.targetPosition.set(player.x, 0, player.z);
   for (const input of pendingInputs) {
     applyInput(localPlayer.userData.targetPosition, input);
   }
