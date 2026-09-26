@@ -45,15 +45,20 @@ const bulletMaterial = new THREE.MeshStandardMaterial({ color: 0xffcc33 });
 const coinGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16);
 const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700 });
 
-const { scene: playerModel } = await new GLTFLoader().loadAsync(
-  "/models/player.glb",
-);
+const { scene: playerModel, animations: playerAnimations } =
+  await new GLTFLoader().loadAsync("/models/player.glb");
 const playerBounds = new THREE.Box3().setFromObject(playerModel);
 const playerSize = playerBounds.getSize(new THREE.Vector3());
 playerModel.scale.setScalar(1.8 / playerSize.y);
 playerBounds.setFromObject(playerModel);
 const playerCenter = playerBounds.getCenter(new THREE.Vector3());
 playerModel.position.set(-playerCenter.x, -playerBounds.min.y, -playerCenter.z);
+
+const playerClips = {
+  idle: THREE.AnimationClip.findByName(playerAnimations, "Idle"),
+  running: THREE.AnimationClip.findByName(playerAnimations, "Running"),
+  death: THREE.AnimationClip.findByName(playerAnimations, "Death"),
+};
 
 const playerMeshes = new Map();
 const enemyMeshes = new Map();
@@ -66,6 +71,31 @@ let lastSnapshotSequence = -1;
 let nextInputSequence = 1;
 let lastInputAt = -Infinity;
 let pendingInputs = [];
+
+function createPlayerModel() {
+  const model = clone(playerModel);
+  const mixer = new THREE.AnimationMixer(model);
+  const actions = Object.fromEntries(
+    Object.entries(playerClips).map(([state, clip]) => [
+      state,
+      mixer.clipAction(clip),
+    ]),
+  );
+  actions.death.setLoop(THREE.LoopOnce, 1);
+  actions.death.clampWhenFinished = true;
+  actions.idle.play();
+  model.userData.animation = { mixer, actions, state: "idle" };
+  return model;
+}
+
+function setPlayerAnimation(model, state) {
+  const animation = model.userData.animation;
+  if (animation.state === state) return;
+
+  animation.actions[animation.state].fadeOut(0.2);
+  animation.actions[state].reset().fadeIn(0.2).play();
+  animation.state = state;
+}
 
 function applyInput(position, input) {
   const length = Math.hypot(input.moveX, input.moveZ) || 1;
@@ -108,12 +138,10 @@ function syncMeshes(items, meshes, createMesh, y) {
 }
 
 function renderState(state) {
-  syncMeshes(
-    state.players,
-    playerMeshes,
-    () => clone(playerModel),
-    0,
-  );
+  syncMeshes(state.players, playerMeshes, createPlayerModel, 0);
+  for (const player of state.players) {
+    playerMeshes.get(player.id).userData.dead = player.hp === 0;
+  }
   syncMeshes(
     state.enemies,
     enemyMeshes,
@@ -213,7 +241,23 @@ function animate() {
   sendInput(performance.now());
 
   for (const [id, mesh] of playerMeshes) {
-    if (id !== playerId) mesh.position.lerp(mesh.userData.targetPosition, interpolation);
+    const moving =
+      mesh.position.distanceToSquared(mesh.userData.targetPosition) > 0.0001;
+    setPlayerAnimation(
+      mesh,
+      mesh.userData.dead ? "death" : moving ? "running" : "idle",
+    );
+    if (moving && !mesh.userData.dead) {
+      mesh.lookAt(
+        mesh.userData.targetPosition.x,
+        mesh.position.y,
+        mesh.userData.targetPosition.z,
+      );
+    }
+    if (id !== playerId) {
+      mesh.position.lerp(mesh.userData.targetPosition, interpolation);
+    }
+    mesh.userData.animation.mixer.update(delta);
   }
   for (const meshes of [enemyMeshes, bulletMeshes]) {
     for (const mesh of meshes.values()) {
