@@ -43,9 +43,12 @@ test("server owns movement and broadcasts one shared world", async () => {
     ({ type, players }) =>
       type === "state" && players.find(({ id }) => id === playerId)?.x > 0,
   );
-  playerA.send(JSON.stringify({ type: "input", moveX: 1, moveZ: 0 }));
+  playerA.send(
+    JSON.stringify({ type: "input", sequence: 1, moveX: 1, moveZ: 0 }),
+  );
   const movedPlayer = (await movedState).players.find(({ id }) => id === playerId);
   assert.ok(movedPlayer.x < 1);
+  assert.equal(movedPlayer.lastProcessedInput, 1);
 
   const sharedStates = await Promise.all([
     nextMessage(playerA, ({ type, enemies }) => type === "state" && enemies.length > 0),

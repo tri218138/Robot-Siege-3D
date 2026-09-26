@@ -5,6 +5,8 @@ const coinCountElement = document.querySelector("#coin-count");
 const timerElement = document.querySelector("#timer");
 const PLAYER_SPEED = 3;
 const MAP_LIMIT = 9.5;
+const INPUT_MS = 50;
+const INPUT_DISTANCE = PLAYER_SPEED * (INPUT_MS / 1000);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcfe8f3);
@@ -49,10 +51,26 @@ const enemyMeshes = new Map();
 const bulletMeshes = new Map();
 const coinMeshes = new Map();
 const clock = new THREE.Clock();
-const localMovement = new THREE.Vector3();
 let playerId;
 let localPlayerAlive = true;
 let lastSnapshotSequence = -1;
+let nextInputSequence = 1;
+let lastInputAt = -Infinity;
+let pendingInputs = [];
+
+function applyInput(position, input) {
+  const length = Math.hypot(input.moveX, input.moveZ) || 1;
+  position.x = THREE.MathUtils.clamp(
+    position.x + (input.moveX / length) * INPUT_DISTANCE,
+    -MAP_LIMIT,
+    MAP_LIMIT,
+  );
+  position.z = THREE.MathUtils.clamp(
+    position.z + (input.moveZ / length) * INPUT_DISTANCE,
+    -MAP_LIMIT,
+    MAP_LIMIT,
+  );
+}
 
 function syncMeshes(items, meshes, createMesh, y) {
   const currentIds = new Set();
@@ -116,6 +134,15 @@ function renderState(state) {
   const player = state.players.find(({ id }) => id === playerId);
   if (!player) return;
 
+  pendingInputs = pendingInputs.filter(
+    ({ sequence }) => sequence > player.lastProcessedInput,
+  );
+  const localPlayer = playerMeshes.get(playerId);
+  localPlayer.userData.targetPosition.set(player.x, 0.5, player.z);
+  for (const input of pendingInputs) {
+    applyInput(localPlayer.userData.targetPosition, input);
+  }
+
   hpElement.textContent = player.hp;
   coinCountElement.textContent = player.coins;
   timerElement.textContent = state.elapsedSeconds;
@@ -137,37 +164,51 @@ socket.addEventListener("message", (event) => {
 
 const keys = new Set();
 
-function sendInput() {
-  if (socket.readyState !== WebSocket.OPEN) return;
-  socket.send(
-    JSON.stringify({
-      type: "input",
-      moveX: Number(keys.has("d")) - Number(keys.has("a")),
-      moveZ: Number(keys.has("s")) - Number(keys.has("w")),
-    }),
-  );
+function sendInput(now) {
+  if (
+    keys.size === 0 ||
+    socket.readyState !== WebSocket.OPEN ||
+    now - lastInputAt < INPUT_MS
+  ) {
+    return;
+  }
+
+  lastInputAt = now;
+  const input = {
+    type: "input",
+    sequence: nextInputSequence++,
+    moveX: Number(keys.has("d")) - Number(keys.has("a")),
+    moveZ: Number(keys.has("s")) - Number(keys.has("w")),
+  };
+  pendingInputs.push(input);
+  socket.send(JSON.stringify(input));
+
+  const localPlayer = playerMeshes.get(playerId);
+  if (localPlayerAlive && localPlayer) {
+    applyInput(localPlayer.userData.targetPosition, input);
+  }
 }
 
 window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   if (!"wasd".includes(key) || keys.has(key)) return;
   keys.add(key);
-  sendInput();
+  lastInputAt = -Infinity;
 });
 
 window.addEventListener("keyup", (event) => {
-  if (keys.delete(event.key.toLowerCase())) sendInput();
+  keys.delete(event.key.toLowerCase());
 });
 
 window.addEventListener("blur", () => {
   keys.clear();
-  sendInput();
 });
 
 function animate() {
   requestAnimationFrame(animate);
   const delta = Math.min(clock.getDelta(), 0.1);
   const interpolation = 1 - Math.exp(-15 * delta);
+  sendInput(performance.now());
 
   for (const [id, mesh] of playerMeshes) {
     if (id !== playerId) mesh.position.lerp(mesh.userData.targetPosition, interpolation);
@@ -180,33 +221,12 @@ function animate() {
 
   const localPlayer = playerMeshes.get(playerId);
   if (localPlayer) {
-    localMovement.set(
-      Number(keys.has("d")) - Number(keys.has("a")),
-      0,
-      Number(keys.has("s")) - Number(keys.has("w")),
-    );
-
-    if (localPlayerAlive && localMovement.lengthSq() > 0) {
-      localMovement.normalize();
-      localPlayer.position.addScaledVector(localMovement, PLAYER_SPEED * delta);
-      localPlayer.position.x = THREE.MathUtils.clamp(
-        localPlayer.position.x,
-        -MAP_LIMIT,
-        MAP_LIMIT,
-      );
-      localPlayer.position.z = THREE.MathUtils.clamp(
-        localPlayer.position.z,
-        -MAP_LIMIT,
-        MAP_LIMIT,
-      );
-    }
-
     if (localPlayer.position.distanceToSquared(localPlayer.userData.targetPosition) > 4) {
       localPlayer.position.copy(localPlayer.userData.targetPosition);
     } else {
       localPlayer.position.lerp(
         localPlayer.userData.targetPosition,
-        1 - Math.exp(-3 * delta),
+        1 - Math.exp(-25 * delta),
       );
     }
 

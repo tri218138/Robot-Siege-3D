@@ -4,6 +4,7 @@ import { WebSocket, WebSocketServer } from "ws";
 const TICK_MS = 50;
 const SNAPSHOT_MS = 100;
 const MAX_BUFFERED_BYTES = 64 * 1024;
+const MAX_INPUT_QUEUE = 4;
 const PLAYER_SPEED = 3;
 const ENEMY_SPEED = 1.2;
 const BULLET_SPEED = 7;
@@ -49,7 +50,9 @@ function gameState() {
     type: "state",
     sequence: ++snapshotSequence,
     elapsedSeconds,
-    players: [...players.values()].map(({ input, nextShotAt, ...player }) => player),
+    players: [...players.values()].map(
+      ({ inputQueue, lastReceivedInput, nextShotAt, ...player }) => player,
+    ),
     enemies: [...enemies.values()].map(({ nextDamageAt, ...enemy }) => enemy),
     bullets: [...bullets.values()],
     coins: [...coins.values()],
@@ -102,17 +105,27 @@ function spawnEnemy() {
   enemies.set(enemy.id, enemy);
 }
 
-function updatePlayers(delta) {
+function updatePlayers() {
   for (const player of players.values()) {
+    const input = player.inputQueue.shift();
+    if (!input) continue;
+    player.lastProcessedInput = input.sequence;
     if (player.hp === 0) continue;
-    const length = Math.hypot(player.input.x, player.input.z) || 1;
+
+    const length = Math.hypot(input.x, input.z) || 1;
     player.x = Math.max(
       -MAP_LIMIT,
-      Math.min(MAP_LIMIT, player.x + (player.input.x / length) * PLAYER_SPEED * delta),
+      Math.min(
+        MAP_LIMIT,
+        player.x + (input.x / length) * PLAYER_SPEED * (TICK_MS / 1000),
+      ),
     );
     player.z = Math.max(
       -MAP_LIMIT,
-      Math.min(MAP_LIMIT, player.z + (player.input.z / length) * PLAYER_SPEED * delta),
+      Math.min(
+        MAP_LIMIT,
+        player.z + (input.z / length) * PLAYER_SPEED * (TICK_MS / 1000),
+      ),
     );
   }
 }
@@ -203,7 +216,7 @@ function tick() {
   if (players.size === 0) return;
 
   const gameRunning = now - startedAt < GAME_DURATION_MS;
-  updatePlayers(delta);
+  updatePlayers();
 
   if (gameRunning) {
     if (now >= nextEnemyAt) {
@@ -231,7 +244,9 @@ server.on("connection", (socket) => {
     z: 0,
     hp: 100,
     coins: 0,
-    input: { x: 0, z: 0 },
+    inputQueue: [],
+    lastReceivedInput: 0,
+    lastProcessedInput: 0,
     nextShotAt: 0,
   };
   players.set(player.id, player);
@@ -249,14 +264,24 @@ server.on("connection", (socket) => {
 
     if (
       message.type !== "input" ||
+      !Number.isSafeInteger(message.sequence) ||
+      message.sequence <= player.lastReceivedInput ||
       !Number.isFinite(message.moveX) ||
       !Number.isFinite(message.moveZ)
     ) {
       return;
     }
 
-    player.input.x = Math.max(-1, Math.min(1, message.moveX));
-    player.input.z = Math.max(-1, Math.min(1, message.moveZ));
+    player.lastReceivedInput = message.sequence;
+    if (player.inputQueue.length === MAX_INPUT_QUEUE) {
+      const droppedInput = player.inputQueue.shift();
+      player.lastProcessedInput = droppedInput.sequence;
+    }
+    player.inputQueue.push({
+      sequence: message.sequence,
+      x: Math.max(-1, Math.min(1, message.moveX)),
+      z: Math.max(-1, Math.min(1, message.moveZ)),
+    });
   });
 
   socket.on("close", () => {
