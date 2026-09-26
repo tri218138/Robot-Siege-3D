@@ -37,8 +37,24 @@ const sunlight = new THREE.DirectionalLight(0xffffff, 3);
 sunlight.position.set(5, 10, 7);
 scene.add(sunlight);
 
+const keys = {};
+
+window.addEventListener("keydown", (event) => {
+  keys[event.key.toLowerCase()] = true;
+});
+
+window.addEventListener("keyup", (event) => {
+  keys[event.key.toLowerCase()] = false;
+});
+
 function animate() {
   requestAnimationFrame(animate);
+
+  if (keys.w) player.position.z -= 0.05;
+  if (keys.s) player.position.z += 0.05;
+  if (keys.a) player.position.x -= 0.05;
+  if (keys.d) player.position.x += 0.05;
+
   renderer.render(scene, camera);
 }
 
