@@ -36,6 +36,44 @@ const player = new THREE.Mesh(
 player.position.y = 0.5;
 scene.add(player);
 
+const remotePlayers = new Map();
+const remotePlayerGeometry = new THREE.BoxGeometry(1, 1, 1);
+const remotePlayerMaterial = new THREE.MeshStandardMaterial({ color: 0x44dd88 });
+let playerId;
+
+function updateRemotePlayer(remotePlayer) {
+  if (remotePlayer.playerId === playerId) return;
+
+  let mesh = remotePlayers.get(remotePlayer.playerId);
+
+  if (!mesh) {
+    mesh = new THREE.Mesh(remotePlayerGeometry, remotePlayerMaterial);
+    remotePlayers.set(remotePlayer.playerId, mesh);
+    scene.add(mesh);
+  }
+
+  mesh.position.set(remotePlayer.x, 0.5, remotePlayer.z);
+}
+
+const socketProtocol = location.protocol === "https:" ? "wss" : "ws";
+const socket = new WebSocket(`${socketProtocol}://${location.hostname}:8080`);
+
+socket.addEventListener("message", (event) => {
+  const message = JSON.parse(event.data);
+
+  if (message.type === "init") {
+    playerId = message.playerId;
+    for (const [remotePlayerId, position] of message.players) {
+      updateRemotePlayer({ playerId: remotePlayerId, ...position });
+    }
+  } else if (message.type === "join" || message.type === "move") {
+    updateRemotePlayer(message);
+  } else if (message.type === "leave") {
+    scene.remove(remotePlayers.get(message.playerId));
+    remotePlayers.delete(message.playerId);
+  }
+});
+
 const enemies = [];
 const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
 const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
@@ -90,6 +128,8 @@ const direction = new THREE.Vector3();
 let playerHP = 100;
 let collectedCoins = 0;
 let elapsedSeconds = 0;
+let lastSentX;
+let lastSentZ;
 
 setInterval(() => {
   if (elapsedSeconds < 60) {
@@ -129,6 +169,21 @@ function animate() {
   if (keys.s) player.position.z += 0.05;
   if (keys.a) player.position.x -= 0.05;
   if (keys.d) player.position.x += 0.05;
+
+  if (
+    socket.readyState === WebSocket.OPEN &&
+    (player.position.x !== lastSentX || player.position.z !== lastSentZ)
+  ) {
+    socket.send(
+      JSON.stringify({
+        type: "move",
+        x: player.position.x,
+        z: player.position.z,
+      }),
+    );
+    lastSentX = player.position.x;
+    lastSentZ = player.position.z;
+  }
 
   camera.position.copy(player.position).add(cameraOffset);
   camera.lookAt(player.position);
