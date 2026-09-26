@@ -1,5 +1,9 @@
 import * as THREE from "three";
 
+const hpElement = document.querySelector("#hp");
+const coinCountElement = document.querySelector("#coin-count");
+const timerElement = document.querySelector("#timer");
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcfe8f3);
 
@@ -55,6 +59,18 @@ function spawnEnemy() {
 spawnEnemy();
 setInterval(spawnEnemy, 2000);
 
+const coins = [];
+const coinGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16);
+const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700 });
+
+function dropCoin(position) {
+  const coin = new THREE.Mesh(coinGeometry, coinMaterial);
+  coin.position.copy(position);
+  coin.position.y = 0.08;
+  coins.push(coin);
+  scene.add(coin);
+}
+
 const bullet = new THREE.Mesh(
   new THREE.SphereGeometry(0.15, 8, 8),
   new THREE.MeshStandardMaterial({ color: 0xffcc33 }),
@@ -71,6 +87,15 @@ scene.add(sunlight);
 const keys = {};
 const direction = new THREE.Vector3();
 let playerHP = 100;
+let collectedCoins = 0;
+let elapsedSeconds = 0;
+
+setInterval(() => {
+  if (elapsedSeconds < 60) {
+    elapsedSeconds += 1;
+    timerElement.textContent = elapsedSeconds;
+  }
+}, 1000);
 
 window.addEventListener("keydown", (event) => {
   keys[event.key.toLowerCase()] = true;
@@ -110,7 +135,19 @@ function animate() {
 
     if (playerHP > 0 && enemy.position.distanceTo(player.position) < 1) {
       playerHP -= 10;
+      hpElement.textContent = playerHP;
       console.log(`HP: ${playerHP}`);
+    }
+  }
+
+  for (let index = coins.length - 1; index >= 0; index -= 1) {
+    const coin = coins[index];
+
+    if (coin.position.distanceTo(player.position) < 0.75) {
+      scene.remove(coin);
+      coins.splice(index, 1);
+      collectedCoins += 1;
+      coinCountElement.textContent = collectedCoins;
     }
   }
 
@@ -131,6 +168,7 @@ function animate() {
       console.log(`Enemy HP: ${target.userData.hp}`);
 
       if (target.userData.hp <= 0) {
+        dropCoin(target.position);
         scene.remove(target);
         enemies.splice(enemies.indexOf(target), 1);
       }
