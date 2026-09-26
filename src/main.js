@@ -13,8 +13,6 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   1000,
 );
-camera.position.set(0, 9, 10);
-camera.lookAt(0, 0, 0);
 const cameraOffset = new THREE.Vector3(0, 12, 10);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -29,30 +27,96 @@ const floor = new THREE.Mesh(
 floor.rotation.x = -Math.PI / 2;
 scene.add(floor);
 
-const player = new THREE.Mesh(
-  new THREE.BoxGeometry(1, 1, 1),
-  new THREE.MeshStandardMaterial({ color: 0x4488ff }),
-);
-player.position.y = 0.5;
-scene.add(player);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445533, 2));
+const sunlight = new THREE.DirectionalLight(0xffffff, 3);
+sunlight.position.set(5, 10, 7);
+scene.add(sunlight);
 
-const remotePlayers = new Map();
-const remotePlayerGeometry = new THREE.BoxGeometry(1, 1, 1);
+const playerGeometry = new THREE.BoxGeometry(1, 1, 1);
+const localPlayerMaterial = new THREE.MeshStandardMaterial({ color: 0x4488ff });
 const remotePlayerMaterial = new THREE.MeshStandardMaterial({ color: 0x44dd88 });
+const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
+const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
+const bulletGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+const bulletMaterial = new THREE.MeshStandardMaterial({ color: 0xffcc33 });
+const coinGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16);
+const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700 });
+
+const playerMeshes = new Map();
+const enemyMeshes = new Map();
+const bulletMeshes = new Map();
+const coinMeshes = new Map();
 let playerId;
 
-function updateRemotePlayer(remotePlayer) {
-  if (remotePlayer.playerId === playerId) return;
+function syncMeshes(items, meshes, createMesh, y) {
+  const currentIds = new Set();
 
-  let mesh = remotePlayers.get(remotePlayer.playerId);
+  for (const item of items) {
+    currentIds.add(item.id);
+    let mesh = meshes.get(item.id);
 
-  if (!mesh) {
-    mesh = new THREE.Mesh(remotePlayerGeometry, remotePlayerMaterial);
-    remotePlayers.set(remotePlayer.playerId, mesh);
-    scene.add(mesh);
+    if (!mesh) {
+      mesh = createMesh(item);
+      meshes.set(item.id, mesh);
+      scene.add(mesh);
+    }
+
+    mesh.position.set(item.x, y, item.z);
   }
 
-  mesh.position.set(remotePlayer.x, 0.5, remotePlayer.z);
+  for (const [id, mesh] of meshes) {
+    if (!currentIds.has(id)) {
+      scene.remove(mesh);
+      meshes.delete(id);
+    }
+  }
+}
+
+function renderState(state) {
+  syncMeshes(
+    state.players,
+    playerMeshes,
+    (player) =>
+      new THREE.Mesh(
+        playerGeometry,
+        player.id === playerId ? localPlayerMaterial : remotePlayerMaterial,
+      ),
+    0.5,
+  );
+  for (const [id, mesh] of playerMeshes) {
+    mesh.material = id === playerId ? localPlayerMaterial : remotePlayerMaterial;
+  }
+  syncMeshes(
+    state.enemies,
+    enemyMeshes,
+    () => new THREE.Mesh(enemyGeometry, enemyMaterial),
+    0.5,
+  );
+  syncMeshes(
+    state.bullets,
+    bulletMeshes,
+    () => new THREE.Mesh(bulletGeometry, bulletMaterial),
+    0.5,
+  );
+  syncMeshes(
+    state.coins,
+    coinMeshes,
+    () => new THREE.Mesh(coinGeometry, coinMaterial),
+    0.08,
+  );
+
+  const player = state.players.find(({ id }) => id === playerId);
+  if (!player) return;
+
+  hpElement.textContent = player.hp;
+  coinCountElement.textContent = player.coins;
+  timerElement.textContent = state.elapsedSeconds;
+  camera.position.set(
+    player.x + cameraOffset.x,
+    cameraOffset.y,
+    player.z + cameraOffset.z,
+  );
+  camera.lookAt(player.x, 0.5, player.z);
 }
 
 const socketProtocol = location.protocol === "https:" ? "wss" : "ws";
@@ -61,179 +125,41 @@ const socket = new WebSocket(`${socketProtocol}://${location.hostname}:8080`);
 socket.addEventListener("message", (event) => {
   const message = JSON.parse(event.data);
 
-  if (message.type === "init") {
-    playerId = message.playerId;
-    for (const [remotePlayerId, position] of message.players) {
-      updateRemotePlayer({ playerId: remotePlayerId, ...position });
-    }
-  } else if (message.type === "join" || message.type === "move") {
-    updateRemotePlayer(message);
-  } else if (message.type === "leave") {
-    scene.remove(remotePlayers.get(message.playerId));
-    remotePlayers.delete(message.playerId);
-  }
+  if (message.type === "init") playerId = message.playerId;
+  if (message.type === "state") renderState(message);
 });
 
-const enemies = [];
-const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
-const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
+const keys = new Set();
 
-function createEnemy() {
-  const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
-  enemy.userData.hp = 30;
-  return enemy;
-}
-
-function spawnEnemy() {
-  const enemy = createEnemy();
-  enemy.position.set(
-    THREE.MathUtils.randFloatSpread(20),
-    0.5,
-    THREE.MathUtils.randFloatSpread(20),
+function sendInput() {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  socket.send(
+    JSON.stringify({
+      type: "input",
+      moveX: Number(keys.has("d")) - Number(keys.has("a")),
+      moveZ: Number(keys.has("s")) - Number(keys.has("w")),
+    }),
   );
-  enemies.push(enemy);
-  scene.add(enemy);
 }
-
-spawnEnemy();
-setInterval(spawnEnemy, 2000);
-
-const coins = [];
-const coinGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16);
-const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700 });
-
-function dropCoin(position) {
-  const coin = new THREE.Mesh(coinGeometry, coinMaterial);
-  coin.position.copy(position);
-  coin.position.y = 0.08;
-  coins.push(coin);
-  scene.add(coin);
-}
-
-const bullet = new THREE.Mesh(
-  new THREE.SphereGeometry(0.15, 8, 8),
-  new THREE.MeshStandardMaterial({ color: 0xffcc33 }),
-);
-bullet.visible = false;
-scene.add(bullet);
-
-scene.add(new THREE.HemisphereLight(0xffffff, 0x445533, 2));
-
-const sunlight = new THREE.DirectionalLight(0xffffff, 3);
-sunlight.position.set(5, 10, 7);
-scene.add(sunlight);
-
-const keys = {};
-const direction = new THREE.Vector3();
-let playerHP = 100;
-let collectedCoins = 0;
-let elapsedSeconds = 0;
-let lastSentX;
-let lastSentZ;
-
-setInterval(() => {
-  if (elapsedSeconds < 60) {
-    elapsedSeconds += 1;
-    timerElement.textContent = elapsedSeconds;
-  }
-}, 1000);
 
 window.addEventListener("keydown", (event) => {
-  keys[event.key.toLowerCase()] = true;
+  const key = event.key.toLowerCase();
+  if (!"wasd".includes(key) || keys.has(key)) return;
+  keys.add(key);
+  sendInput();
 });
 
 window.addEventListener("keyup", (event) => {
-  keys[event.key.toLowerCase()] = false;
+  if (keys.delete(event.key.toLowerCase())) sendInput();
 });
 
-function findNearestEnemy() {
-  let nearestEnemy = null;
-  let nearestDistance = Infinity;
-
-  for (const enemy of enemies) {
-    const distance = player.position.distanceToSquared(enemy.position);
-
-    if (distance < nearestDistance) {
-      nearestEnemy = enemy;
-      nearestDistance = distance;
-    }
-  }
-
-  return nearestEnemy;
-}
+window.addEventListener("blur", () => {
+  keys.clear();
+  sendInput();
+});
 
 function animate() {
   requestAnimationFrame(animate);
-
-  if (keys.w) player.position.z -= 0.05;
-  if (keys.s) player.position.z += 0.05;
-  if (keys.a) player.position.x -= 0.05;
-  if (keys.d) player.position.x += 0.05;
-
-  if (
-    socket.readyState === WebSocket.OPEN &&
-    (player.position.x !== lastSentX || player.position.z !== lastSentZ)
-  ) {
-    socket.send(
-      JSON.stringify({
-        type: "move",
-        x: player.position.x,
-        z: player.position.z,
-      }),
-    );
-    lastSentX = player.position.x;
-    lastSentZ = player.position.z;
-  }
-
-  camera.position.copy(player.position).add(cameraOffset);
-  camera.lookAt(player.position);
-
-  for (const enemy of enemies) {
-    direction.subVectors(player.position, enemy.position).normalize();
-    enemy.position.add(direction.multiplyScalar(0.02));
-
-    if (playerHP > 0 && enemy.position.distanceTo(player.position) < 1) {
-      playerHP -= 10;
-      hpElement.textContent = playerHP;
-      console.log(`HP: ${playerHP}`);
-    }
-  }
-
-  for (let index = coins.length - 1; index >= 0; index -= 1) {
-    const coin = coins[index];
-
-    if (coin.position.distanceTo(player.position) < 0.75) {
-      scene.remove(coin);
-      coins.splice(index, 1);
-      collectedCoins += 1;
-      coinCountElement.textContent = collectedCoins;
-    }
-  }
-
-  const target = findNearestEnemy();
-
-  if (target) {
-    if (!bullet.visible) {
-      bullet.position.copy(player.position);
-      bullet.visible = true;
-    }
-
-    direction.subVectors(target.position, bullet.position).normalize();
-    bullet.position.add(direction.multiplyScalar(0.1));
-
-    if (bullet.position.distanceTo(target.position) < 0.6) {
-      target.userData.hp -= 10;
-      bullet.visible = false;
-      console.log(`Enemy HP: ${target.userData.hp}`);
-
-      if (target.userData.hp <= 0) {
-        dropCoin(target.position);
-        scene.remove(target);
-        enemies.splice(enemies.indexOf(target), 1);
-      }
-    }
-  }
-
   renderer.render(scene, camera);
 }
 
