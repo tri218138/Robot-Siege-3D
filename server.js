@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 
 const TICK_MS = 50;
+const SNAPSHOT_MS = 100;
+const MAX_BUFFERED_BYTES = 64 * 1024;
 const PLAYER_SPEED = 3;
 const ENEMY_SPEED = 1.2;
 const BULLET_SPEED = 7;
@@ -15,7 +17,9 @@ const bullets = new Map();
 const coins = new Map();
 let startedAt;
 let nextEnemyAt;
+let nextSnapshotAt;
 let nextEntityId = 0;
+let snapshotSequence = 0;
 let lastTick = Date.now();
 
 export const server = new WebSocketServer({
@@ -28,8 +32,10 @@ function resetGame() {
   bullets.clear();
   coins.clear();
   nextEntityId = 0;
+  snapshotSequence = 0;
   startedAt = Date.now();
   nextEnemyAt = startedAt;
+  nextSnapshotAt = startedAt;
   lastTick = startedAt;
 }
 
@@ -41,6 +47,7 @@ function gameState() {
 
   return {
     type: "state",
+    sequence: ++snapshotSequence,
     elapsedSeconds,
     players: [...players.values()].map(({ input, nextShotAt, ...player }) => player),
     enemies: [...enemies.values()].map(({ nextDamageAt, ...enemy }) => enemy),
@@ -50,10 +57,18 @@ function gameState() {
 }
 
 function broadcastState(targets = server.clients) {
-  const data = JSON.stringify(gameState());
+  // ponytail: Full snapshots recover from packet loss; add deltas only after profiling.
+  const data = JSON.stringify(gameState(), (_key, value) =>
+    typeof value === "number" ? Math.round(value * 1000) / 1000 : value,
+  );
 
   for (const client of targets) {
-    if (client.readyState === WebSocket.OPEN) client.send(data);
+    if (
+      client.readyState === WebSocket.OPEN &&
+      client.bufferedAmount < MAX_BUFFERED_BYTES
+    ) {
+      client.send(data);
+    }
   }
 }
 
@@ -201,7 +216,10 @@ function tick() {
     collectCoins();
   }
 
-  broadcastState();
+  if (now >= nextSnapshotAt) {
+    broadcastState();
+    nextSnapshotAt = now + SNAPSHOT_MS;
+  }
 }
 
 server.on("connection", (socket) => {

@@ -3,6 +3,8 @@ import * as THREE from "three";
 const hpElement = document.querySelector("#hp");
 const coinCountElement = document.querySelector("#coin-count");
 const timerElement = document.querySelector("#timer");
+const PLAYER_SPEED = 3;
+const MAP_LIMIT = 9.5;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcfe8f3);
@@ -46,7 +48,11 @@ const playerMeshes = new Map();
 const enemyMeshes = new Map();
 const bulletMeshes = new Map();
 const coinMeshes = new Map();
+const clock = new THREE.Clock();
+const localMovement = new THREE.Vector3();
 let playerId;
+let localPlayerAlive = true;
+let lastSnapshotSequence = -1;
 
 function syncMeshes(items, meshes, createMesh, y) {
   const currentIds = new Set();
@@ -57,11 +63,13 @@ function syncMeshes(items, meshes, createMesh, y) {
 
     if (!mesh) {
       mesh = createMesh(item);
+      mesh.userData.targetPosition = new THREE.Vector3(item.x, y, item.z);
+      mesh.position.copy(mesh.userData.targetPosition);
       meshes.set(item.id, mesh);
       scene.add(mesh);
+    } else {
+      mesh.userData.targetPosition.set(item.x, y, item.z);
     }
-
-    mesh.position.set(item.x, y, item.z);
   }
 
   for (const [id, mesh] of meshes) {
@@ -111,12 +119,7 @@ function renderState(state) {
   hpElement.textContent = player.hp;
   coinCountElement.textContent = player.coins;
   timerElement.textContent = state.elapsedSeconds;
-  camera.position.set(
-    player.x + cameraOffset.x,
-    cameraOffset.y,
-    player.z + cameraOffset.z,
-  );
-  camera.lookAt(player.x, 0.5, player.z);
+  localPlayerAlive = player.hp > 0;
 }
 
 const socketProtocol = location.protocol === "https:" ? "wss" : "ws";
@@ -126,7 +129,10 @@ socket.addEventListener("message", (event) => {
   const message = JSON.parse(event.data);
 
   if (message.type === "init") playerId = message.playerId;
-  if (message.type === "state") renderState(message);
+  if (message.type === "state" && message.sequence > lastSnapshotSequence) {
+    lastSnapshotSequence = message.sequence;
+    renderState(message);
+  }
 });
 
 const keys = new Set();
@@ -160,6 +166,54 @@ window.addEventListener("blur", () => {
 
 function animate() {
   requestAnimationFrame(animate);
+  const delta = Math.min(clock.getDelta(), 0.1);
+  const interpolation = 1 - Math.exp(-15 * delta);
+
+  for (const [id, mesh] of playerMeshes) {
+    if (id !== playerId) mesh.position.lerp(mesh.userData.targetPosition, interpolation);
+  }
+  for (const meshes of [enemyMeshes, bulletMeshes]) {
+    for (const mesh of meshes.values()) {
+      mesh.position.lerp(mesh.userData.targetPosition, interpolation);
+    }
+  }
+
+  const localPlayer = playerMeshes.get(playerId);
+  if (localPlayer) {
+    localMovement.set(
+      Number(keys.has("d")) - Number(keys.has("a")),
+      0,
+      Number(keys.has("s")) - Number(keys.has("w")),
+    );
+
+    if (localPlayerAlive && localMovement.lengthSq() > 0) {
+      localMovement.normalize();
+      localPlayer.position.addScaledVector(localMovement, PLAYER_SPEED * delta);
+      localPlayer.position.x = THREE.MathUtils.clamp(
+        localPlayer.position.x,
+        -MAP_LIMIT,
+        MAP_LIMIT,
+      );
+      localPlayer.position.z = THREE.MathUtils.clamp(
+        localPlayer.position.z,
+        -MAP_LIMIT,
+        MAP_LIMIT,
+      );
+    }
+
+    if (localPlayer.position.distanceToSquared(localPlayer.userData.targetPosition) > 4) {
+      localPlayer.position.copy(localPlayer.userData.targetPosition);
+    } else {
+      localPlayer.position.lerp(
+        localPlayer.userData.targetPosition,
+        1 - Math.exp(-3 * delta),
+      );
+    }
+
+    camera.position.copy(localPlayer.position).add(cameraOffset);
+    camera.lookAt(localPlayer.position);
+  }
+
   renderer.render(scene, camera);
 }
 
