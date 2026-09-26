@@ -36,7 +36,16 @@ const enemy = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0xff4444 }),
 );
 enemy.position.set(8, 0.5, 8);
+enemy.userData.hp = 30;
 scene.add(enemy);
+
+const enemies = [enemy];
+const bullet = new THREE.Mesh(
+  new THREE.SphereGeometry(0.15, 8, 8),
+  new THREE.MeshStandardMaterial({ color: 0xffcc33 }),
+);
+bullet.visible = false;
+scene.add(bullet);
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445533, 2));
 
@@ -56,6 +65,22 @@ window.addEventListener("keyup", (event) => {
   keys[event.key.toLowerCase()] = false;
 });
 
+function findNearestEnemy() {
+  let nearestEnemy = null;
+  let nearestDistance = Infinity;
+
+  for (const enemy of enemies) {
+    const distance = player.position.distanceToSquared(enemy.position);
+
+    if (distance < nearestDistance) {
+      nearestEnemy = enemy;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearestEnemy;
+}
+
 function animate() {
   requestAnimationFrame(animate);
 
@@ -64,12 +89,35 @@ function animate() {
   if (keys.a) player.position.x -= 0.05;
   if (keys.d) player.position.x += 0.05;
 
-  direction.subVectors(player.position, enemy.position).normalize();
-  enemy.position.add(direction.multiplyScalar(0.02));
+  const target = findNearestEnemy();
 
-  if (playerHP > 0 && enemy.position.distanceTo(player.position) < 1) {
-    playerHP -= 10;
-    console.log(`HP: ${playerHP}`);
+  if (target) {
+    direction.subVectors(player.position, target.position).normalize();
+    target.position.add(direction.multiplyScalar(0.02));
+
+    if (playerHP > 0 && target.position.distanceTo(player.position) < 1) {
+      playerHP -= 10;
+      console.log(`HP: ${playerHP}`);
+    }
+
+    if (!bullet.visible) {
+      bullet.position.copy(player.position);
+      bullet.visible = true;
+    }
+
+    direction.subVectors(target.position, bullet.position).normalize();
+    bullet.position.add(direction.multiplyScalar(0.1));
+
+    if (bullet.position.distanceTo(target.position) < 0.6) {
+      target.userData.hp -= 10;
+      bullet.visible = false;
+      console.log(`Enemy HP: ${target.userData.hp}`);
+
+      if (target.userData.hp <= 0) {
+        scene.remove(target);
+        enemies.splice(enemies.indexOf(target), 1);
+      }
+    }
   }
 
   renderer.render(scene, camera);
