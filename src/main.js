@@ -9,7 +9,7 @@ const camera = new THREE.PerspectiveCamera(
   0.1,
   1000,
 );
-camera.position.set(8, 9, 10);
+camera.position.set(0, 9, 10);
 camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -31,6 +31,13 @@ const player = new THREE.Mesh(
 player.position.y = 0.5;
 scene.add(player);
 
+const enemy = new THREE.Mesh(
+  new THREE.BoxGeometry(1, 1, 1),
+  new THREE.MeshStandardMaterial({ color: 0xff4444 }),
+);
+enemy.position.set(8, 0.5, 8);
+scene.add(enemy);
+
 scene.add(new THREE.HemisphereLight(0xffffff, 0x445533, 2));
 
 const sunlight = new THREE.DirectionalLight(0xffffff, 3);
@@ -38,6 +45,7 @@ sunlight.position.set(5, 10, 7);
 scene.add(sunlight);
 
 const keys = {};
+const direction = new THREE.Vector3();
 
 window.addEventListener("keydown", (event) => {
   keys[event.key.toLowerCase()] = true;
@@ -54,6 +62,9 @@ function animate() {
   if (keys.s) player.position.z += 0.05;
   if (keys.a) player.position.x -= 0.05;
   if (keys.d) player.position.x += 0.05;
+
+  direction.subVectors(player.position, enemy.position).normalize();
+  enemy.position.add(direction.multiplyScalar(0.02));
 
   renderer.render(scene, camera);
 }
