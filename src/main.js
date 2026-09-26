@@ -15,6 +15,7 @@ const camera = new THREE.PerspectiveCamera(
 );
 camera.position.set(0, 9, 10);
 camera.lookAt(0, 0, 0);
+const cameraOffset = new THREE.Vector3(0, 12, 10);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -128,6 +129,9 @@ function animate() {
   if (keys.s) player.position.z += 0.05;
   if (keys.a) player.position.x -= 0.05;
   if (keys.d) player.position.x += 0.05;
+
+  camera.position.copy(player.position).add(cameraOffset);
+  camera.lookAt(player.position);
 
   for (const enemy of enemies) {
     direction.subVectors(player.position, enemy.position).normalize();
