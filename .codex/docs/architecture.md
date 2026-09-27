@@ -51,8 +51,10 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 |---|---|
 | `server.js` | WebSocket server, authoritative state, game loop, validation, combat, spawning, collection. |
 | `src/main.js` | Scene setup, asset loading, network client, input prediction, reconciliation, interpolation, animation, VFX, camera, rendering. |
+| `src/instance-store.js` | Capacity-bounded lifecycle reconciliation for instanced dynamic entities. |
 | `index.html` | Full-screen canvas host and DOM HUD. |
 | `test/multiplayer.test.js` | Server-authority, weapon steering/selection, movement acknowledgement, and shared-world integration test. |
+| `test/instance-store.test.js` | Instance-store reuse, removal, and capacity test. |
 | `public/models/player.glb` | Rigged RobotExpressive player asset served by Vite at `/models/player.glb`. |
 | `public/models/README.md` | Player asset source and license. |
 | `package.json` | Runtime dependencies and development commands. |
@@ -106,6 +108,7 @@ Changing one side without the other causes prediction drift and visible reconcil
 
 - Server input queues are capped at four entries per player.
 - Snapshots are skipped for a client whose WebSocket buffered amount is at least 64 KiB.
+- Enemy, bullet, and coin rendering uses fixed 512-entry instance buffers.
 - VFX reuse a fixed 512-particle buffer instead of allocating meshes continuously.
 
 ## Intentional ceilings
@@ -115,6 +118,6 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Full snapshots rather than delta compression.
 - Fixed ports in the browser/server development setup.
 - No reconnect/resume protocol.
-- No spatial partitioning, physics engine, instancing, or LOD.
+- No spatial partitioning, physics engine, or LOD.
 
 These are deliberate prototype constraints. Upgrade them only when the requested feature or measured load requires it.

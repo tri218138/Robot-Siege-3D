@@ -8,7 +8,8 @@
 2. Create the Three.js scene, perspective camera, renderer, lighting, grass
    floor, and static environment.
 3. Load the four environment model files from `/models/environment/` in parallel.
-4. Clone and place the environment props, then create shared enemy, bullet, coin, and particle resources.
+4. Clone and place the environment props, then create shared instanced enemy,
+   bullet, coin, and particle resources.
 5. Load `/models/player.glb` with the same `GLTFLoader`.
 6. Normalize the player model to 1.8 world units tall, center it on X/Z, and place its lowest bound at ground level.
 7. Find the `Idle`, `Running`, and `Death` animation clips.
@@ -66,23 +67,39 @@ no colliders. Adding obstacles inside the playfield requires authoritative
 server collision plus matching client prediction; visual geometry must not be
 treated as gameplay collision by the client alone.
 
-## Entity representation
+## Entity representation and instancing
 
-The client keeps four maps keyed by authoritative ID:
+The client keeps four stores keyed by authoritative ID:
 
 - `playerMeshes`
-- `enemyMeshes`
-- `bulletMeshes`
-- `coinMeshes`
+- `enemies`
+- `bullets`
+- `coins`
 
-Each rendered object stores `userData.targetPosition`. Incoming snapshots update that target; the animation frame interpolates the visible position toward it.
+Players remain separate cloned GLB objects because each owns an animation
+mixer and skeleton. Each player stores `userData.targetPosition`; incoming
+snapshots update that target and the animation frame interpolates toward it.
 
-`syncMeshes()` implements full-snapshot reconciliation:
+Enemies, bullets, and coins use three shared `THREE.InstancedMesh` objects
+instead of one scene object and draw call per entity. Their stores hold only
+current/target positions plus bullet color. Each render frame writes packed
+translation matrices into dynamic instance buffers; bullet colors use the
+single mesh's `instanceColor` buffer. Frustum culling is disabled for these
+moving batches so a stale aggregate bounding volume cannot hide them.
+
+`syncMeshes()` reconciles player scene objects. `syncInstanceStore()` performs
+the equivalent lifecycle for the three instanced stores:
 
 1. Create objects for IDs not already present.
 2. Update target positions for existing IDs.
-3. Remove map/scene objects whose IDs are absent from the new snapshot.
+3. Remove entries whose IDs are absent from the new snapshot.
 4. Optionally run an `onRemove` callback before removal for lifecycle VFX.
+
+Each instanced group has a fixed capacity of 512. This is above the current
+60-second round's practical entity load and keeps GPU buffers stable. Entities
+over that ceiling remain authoritative on the server but are not rendered;
+increase or dynamically grow the capacity only when a larger room or longer
+round is introduced and profiled.
 
 ## Player model and animation
 

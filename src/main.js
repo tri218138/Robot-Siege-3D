@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { clone } from "three/addons/utils/SkeletonUtils.js";
+import { syncInstanceStore } from "./instance-store.js";
 
 const hpElement = document.querySelector("#hp");
 const coinCountElement = document.querySelector("#coin-count");
@@ -151,26 +152,50 @@ addEnvironmentModel(barrelAsset.scene, -8.1, -10.7, 0.5, -0.3);
 const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
 const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
 const bulletGeometry = new THREE.SphereGeometry(0.15, 8, 8);
+const bulletMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
 const weaponStyles = {
   pistol: {
     label: "Pistol",
     color: new THREE.Color(0xffdd55),
-    material: new THREE.MeshStandardMaterial({ color: 0xffcc33 }),
+    bulletColor: new THREE.Color(0xffcc33),
   },
   shotgun: {
     label: "Shotgun",
     color: new THREE.Color(0xff8844),
-    material: new THREE.MeshStandardMaterial({ color: 0xff6633 }),
+    bulletColor: new THREE.Color(0xff6633),
   },
   machineGun: {
     label: "Machine Gun",
     color: new THREE.Color(0x55ddff),
-    material: new THREE.MeshStandardMaterial({ color: 0x33bbff }),
+    bulletColor: new THREE.Color(0x33bbff),
   },
 };
 const weaponCycle = ["pistol", "shotgun", "machineGun"];
 const coinGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16);
 const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700 });
+
+// ponytail: 512 exceeds the current 60-second round load; grow only after
+// profiling a larger room or longer round.
+const MAX_INSTANCES = 512;
+function createInstancedMesh(geometry, material, castShadow = false) {
+  const mesh = new THREE.InstancedMesh(geometry, material, MAX_INSTANCES);
+  mesh.count = 0;
+  mesh.castShadow = castShadow;
+  mesh.receiveShadow = castShadow;
+  mesh.frustumCulled = false;
+  mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  scene.add(mesh);
+  return mesh;
+}
+
+const enemyInstances = createInstancedMesh(
+  enemyGeometry,
+  enemyMaterial,
+  true,
+);
+const bulletInstances = createInstancedMesh(bulletGeometry, bulletMaterial);
+const coinInstances = createInstancedMesh(coinGeometry, coinMaterial, true);
+const instanceMatrix = new THREE.Matrix4();
 
 // ponytail: Fixed pool caps VFX cost; raise it only after profiling.
 const MAX_PARTICLES = 512;
@@ -229,9 +254,9 @@ const playerClips = {
 };
 
 const playerMeshes = new Map();
-const enemyMeshes = new Map();
-const bulletMeshes = new Map();
-const coinMeshes = new Map();
+const enemies = new Map();
+const bullets = new Map();
+const coins = new Map();
 const clock = new THREE.Clock();
 let playerId;
 let localPlayerAlive = true;
@@ -345,21 +370,55 @@ function syncMeshes(items, meshes, createMesh, y, onRemove) {
   }
 }
 
+function syncInstances(items, instances, y, onCreate, onRemove) {
+  syncInstanceStore(
+    items,
+    instances,
+    MAX_INSTANCES,
+    (item) => {
+      const position = new THREE.Vector3(item.x, y, item.z);
+      const instance = {
+        position,
+        targetPosition: position.clone(),
+      };
+      onCreate?.(instance, item);
+      return instance;
+    },
+    (instance, item) => instance.targetPosition.set(item.x, y, item.z),
+    onRemove,
+  );
+}
+
+function updateInstances(mesh, instances, interpolation) {
+  let index = 0;
+
+  for (const instance of instances.values()) {
+    instance.position.lerp(instance.targetPosition, interpolation);
+    instanceMatrix.makeTranslation(
+      instance.position.x,
+      instance.position.y,
+      instance.position.z,
+    );
+    mesh.setMatrixAt(index, instanceMatrix);
+    if (instance.color) mesh.setColorAt(index, instance.color);
+    index += 1;
+  }
+
+  mesh.count = index;
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+}
+
 function renderState(state) {
   syncMeshes(state.players, playerMeshes, createPlayerModel, 0);
   for (const player of state.players) {
     playerMeshes.get(player.id).userData.dead = player.hp === 0;
   }
-  syncMeshes(
+  syncInstances(
     state.enemies,
-    enemyMeshes,
-    () => {
-      const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
-      enemy.castShadow = true;
-      enemy.receiveShadow = true;
-      return enemy;
-    },
+    enemies,
     0.5,
+    undefined,
     (enemy) =>
       emitParticles(
         enemy.position.x,
@@ -371,37 +430,27 @@ function renderState(state) {
         0.55,
       ),
   );
-  syncMeshes(
+  syncInstances(
     state.bullets,
-    bulletMeshes,
-    ({ x, z, weapon }) => {
+    bullets,
+    0.5,
+    (bullet, { x, z, weapon }) => {
       const style = weaponStyles[weapon] ?? weaponStyles.pistol;
       emitParticles(x, 0.5, z, style.color, 6, 2);
-      const bullet = new THREE.Mesh(bulletGeometry, style.material);
-      bullet.userData.trailColor = style.color;
-      return bullet;
+      bullet.color = style.bulletColor;
+      bullet.trailColor = style.color;
     },
-    0.5,
     (bullet) =>
       emitParticles(
         bullet.position.x,
         bullet.position.y,
         bullet.position.z,
-        bullet.userData.trailColor,
+        bullet.trailColor,
         5,
         1.5,
       ),
   );
-  syncMeshes(
-    state.coins,
-    coinMeshes,
-    () => {
-      const coin = new THREE.Mesh(coinGeometry, coinMaterial);
-      coin.castShadow = true;
-      return coin;
-    },
-    0.08,
-  );
+  syncInstances(state.coins, coins, 0.08);
 
   const player = state.players.find(({ id }) => id === playerId);
   if (!player) return;
@@ -512,16 +561,15 @@ function animate() {
     }
     mesh.userData.animation.mixer.update(delta);
   }
-  for (const mesh of enemyMeshes.values()) {
-    mesh.position.lerp(mesh.userData.targetPosition, interpolation);
-  }
-  for (const mesh of bulletMeshes.values()) {
-    mesh.position.lerp(mesh.userData.targetPosition, interpolation);
+  updateInstances(enemyInstances, enemies, interpolation);
+  updateInstances(bulletInstances, bullets, interpolation);
+  updateInstances(coinInstances, coins, interpolation);
+  for (const bullet of bullets.values()) {
     emitParticles(
-      mesh.position.x,
-      mesh.position.y,
-      mesh.position.z,
-      mesh.userData.trailColor,
+      bullet.position.x,
+      bullet.position.y,
+      bullet.position.z,
+      bullet.trailColor,
       1,
       0.15,
       0.2,

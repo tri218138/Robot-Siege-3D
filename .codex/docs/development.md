@@ -98,6 +98,9 @@ pure separation steering helper, and connects two clients. It verifies:
 - `lastProcessedInput` acknowledges the processed input.
 - Two clients receive the same enemy collection for the shared world.
 
+`test/instance-store.test.js` verifies that instanced entity entries are reused,
+missing IDs are removed, and the fixed capacity is respected.
+
 It does not currently test the 60-second end state, damage cooldowns, bullet hits, coin collection, queue overflow, disconnect cleanup, rendering, animation, or particles.
 
 ## Change-impact guide
@@ -111,6 +114,7 @@ It does not currently test the 60-second end state, damage cooldowns, bullet hit
 | Environment source model | Run `npm run assets`, check provenance, then build and browser-render the optimized output. |
 | Animation state | Check per-player mixer ownership, transitions, server state/event source, browser behavior. |
 | Particle behavior | Preserve fixed-buffer reuse, dynamic buffer updates, lifecycle trigger correctness, browser behavior. |
+| Instanced entity behavior | Preserve the 512-entry ceiling, packed matrix/color updates, lifecycle VFX, and browser rendering. |
 | WebSocket address/deployment | Reconcile bind host, browser URL, TLS proxy, and documentation. |
 
 ## Repository hygiene
