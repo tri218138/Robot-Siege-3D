@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { clone } from "three/addons/utils/SkeletonUtils.js";
 
 const hpElement = document.querySelector("#hp");
@@ -53,6 +54,7 @@ scene.add(sunlight);
 const environment = new THREE.Group();
 scene.add(environment);
 const gltfLoader = new GLTFLoader();
+gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 
 function addRoad(geometry, material, x, z) {
   const mesh = new THREE.Mesh(geometry, material);
@@ -69,7 +71,7 @@ const [forestAsset, wallAsset, barrelAsset, houseAsset] = await Promise.all([
   gltfLoader.loadAsync("/models/environment/forest.glb"),
   gltfLoader.loadAsync("/models/environment/wall.glb"),
   gltfLoader.loadAsync("/models/environment/barrel.glb"),
-  gltfLoader.loadAsync("/models/environment/building_home_A_red.gltf"),
+  gltfLoader.loadAsync("/models/environment/house.glb"),
 ]);
 
 function addEnvironmentModel(template, x, z, scale, rotationY = 0) {

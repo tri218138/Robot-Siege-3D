@@ -49,8 +49,9 @@ grading.
 The grass plane and two crossing dirt roads remain simple Three.js geometry.
 All decorative props are downloaded CC0 models loaded through `GLTFLoader`:
 `forest.glb` supplies named tree and rock meshes, `wall.glb` and `barrel.glb`
-supply dungeon props, and `building_home_A_red.gltf` plus its buffer and texture
-supply the house. Their pinned sources and licenses are recorded in
+supply dungeon props, and `house.glb` supplies the house. The shared loader is
+configured with Three.js's `MeshoptDecoder` for the optimized runtime files.
+Their pinned sources and licenses are recorded in
 `public/models/environment/CREDITS.md`.
 
 The client clones these templates into eight wall pieces, eight trees, four

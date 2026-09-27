@@ -17,9 +17,11 @@ Runtime dependencies:
 - `three`: scene rendering, GLB loading, skeletal cloning/animation, and particles.
 - `ws`: Node.js WebSocket server and integration-test clients.
 
-Development dependency:
+Development dependencies:
 
 - `vite`: browser development server and production build.
+- `@gltf-transform/cli`: validates, packs, and optimizes source models into
+  runtime GLBs.
 
 ## Run locally
 
@@ -44,6 +46,7 @@ The browser client requires the WebSocket server for players and gameplay entiti
 
 | Command | Purpose |
 |---|---|
+| `npm run assets` | Rebuild and validate optimized environment GLBs. |
 | `npm run dev` | Start Vite development server with HMR. |
 | `npm run server` | Start the authoritative WebSocket simulation. |
 | `npm test` | Run Node's built-in test runner. |
@@ -61,6 +64,14 @@ public/models/player.glb -> /models/player.glb
 ```
 
 Keep model source/license information in `public/models/README.md`. The current RobotExpressive asset is rigged and contains the clips used by the client.
+
+Environment source downloads live in `assets/source/environment/`. The
+`npm run assets` command converts them into Meshopt-compressed GLBs in
+`public/models/environment/`, embeds the house's external buffer and texture,
+validates every output, and checks that the named forest templates used by the
+client survived optimization. Outputs are built in a temporary directory and
+only replace runtime files after every model succeeds. The browser loader must
+keep its `MeshoptDecoder` configuration while these outputs are in use.
 
 ## Verification
 
@@ -93,6 +104,7 @@ It does not currently test the 60-second end state, damage cooldowns, bullet hit
 | New server entity or field | Update serializer, client map/sync, protocol schema, authority test. |
 | New removal reason | Stop relying only on missing IDs; add explicit lifecycle semantics if VFX/gameplay needs the reason. |
 | Player model or clips | Check GLB path/license, bounds normalization, `SkeletonUtils.clone`, clip names, browser rendering. |
+| Environment source model | Run `npm run assets`, check provenance, then build and browser-render the optimized output. |
 | Animation state | Check per-player mixer ownership, transitions, server state/event source, browser behavior. |
 | Particle behavior | Preserve fixed-buffer reuse, dynamic buffer updates, lifecycle trigger correctness, browser behavior. |
 | WebSocket address/deployment | Reconcile bind host, browser URL, TLS proxy, and documentation. |
