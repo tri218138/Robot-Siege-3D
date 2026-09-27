@@ -24,6 +24,8 @@ const cameraOffset = new THREE.Vector3(0, 12, 10);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 const floor = new THREE.Mesh(
@@ -31,11 +33,21 @@ const floor = new THREE.Mesh(
   new THREE.MeshStandardMaterial({ color: 0x88aa66 }),
 );
 floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
 scene.add(floor);
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x445533, 2));
-const sunlight = new THREE.DirectionalLight(0xffffff, 3);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445533, 1.2));
+const sunlight = new THREE.DirectionalLight(0xffffff, 2.5);
 sunlight.position.set(5, 10, 7);
+sunlight.castShadow = true;
+sunlight.shadow.mapSize.set(1024, 1024);
+sunlight.shadow.camera.left = -12;
+sunlight.shadow.camera.right = 12;
+sunlight.shadow.camera.top = 12;
+sunlight.shadow.camera.bottom = -12;
+sunlight.shadow.camera.near = 0.5;
+sunlight.shadow.camera.far = 30;
+sunlight.shadow.normalBias = 0.02;
 scene.add(sunlight);
 
 const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
@@ -90,6 +102,11 @@ playerModel.scale.setScalar(1.8 / playerSize.y);
 playerBounds.setFromObject(playerModel);
 const playerCenter = playerBounds.getCenter(new THREE.Vector3());
 playerModel.position.set(-playerCenter.x, -playerBounds.min.y, -playerCenter.z);
+playerModel.traverse((object) => {
+  if (!object.isMesh) return;
+  object.castShadow = true;
+  object.receiveShadow = true;
+});
 
 const playerClips = {
   idle: THREE.AnimationClip.findByName(playerAnimations, "Idle"),
@@ -221,7 +238,12 @@ function renderState(state) {
   syncMeshes(
     state.enemies,
     enemyMeshes,
-    () => new THREE.Mesh(enemyGeometry, enemyMaterial),
+    () => {
+      const enemy = new THREE.Mesh(enemyGeometry, enemyMaterial);
+      enemy.castShadow = true;
+      enemy.receiveShadow = true;
+      return enemy;
+    },
     0.5,
     (enemy) =>
       emitParticles(
@@ -255,7 +277,11 @@ function renderState(state) {
   syncMeshes(
     state.coins,
     coinMeshes,
-    () => new THREE.Mesh(coinGeometry, coinMaterial),
+    () => {
+      const coin = new THREE.Mesh(coinGeometry, coinMaterial);
+      coin.castShadow = true;
+      return coin;
+    },
     0.08,
   );
 
