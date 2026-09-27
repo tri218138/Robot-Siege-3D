@@ -30,9 +30,10 @@ The repository implements a small server-authoritative multiplayer survival game
 - One in-memory room and a 60-second round.
 - WASD movement with client prediction and server reconciliation.
 - Enemies, three server-authoritative weapons, automatic shooting, bullets,
-  damage, coins, HUD, camera follow, a static low-poly environment, animated
-  GLB player models, instanced dynamic entities, pooled particle VFX, latency
-  display, and automatic socket reconnection.
+  damage, coins, HUD, smoothed camera feedback, synthesized browser audio, a
+  static low-poly environment, animated GLB player models, instanced dynamic
+  entities, pooled particle VFX, latency display, and automatic socket
+  reconnection.
 
 There is currently no database, persistence, authentication, room selection,
 session resume, physics engine, React UI, or deployment configuration.

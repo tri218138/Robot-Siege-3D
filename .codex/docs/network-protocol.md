@@ -102,6 +102,7 @@ and displays the round-trip time. The probe never mutates gameplay state.
   "bullets": [
     {
       "id": "bullet-8",
+      "ownerId": "uuid",
       "weapon": "shotgun",
       "x": 2.5,
       "z": 0.2
@@ -118,6 +119,8 @@ and displays the round-trip time. The probe never mutates gameplay state.
 ```
 
 All numeric values are rounded to three decimal places during serialization.
+`ownerId` identifies the authoritative player that fired a bullet. The client
+uses it to limit recoil and gunshot audio to the local player's shots.
 
 ## Snapshot sequence
 

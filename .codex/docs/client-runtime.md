@@ -27,7 +27,13 @@ If the model fails to load, module initialization currently rejects and the WebS
 - The environment floor is a green 24×24 plane at `y = 0`; the authoritative
   playable area remains bounded to ±9.5 on X/Z.
 - The local camera offset is `(0, 12, 10)`.
-- Each frame with a local player, camera position is `player.position + cameraOffset` and the camera looks at the player.
+- On the first local-player frame, the camera snaps to `player.position +
+  cameraOffset`. Later frames exponentially smooth both position and look
+  target with factor 8 so follow behavior remains frame-rate independent.
+- A local shot briefly increases FOV and offsets the follow target for recoil.
+  Enemy death and local damage add a 100 ms positional shake. Enemy damage
+  freezes visual interpolation, animation, and particles for 35 ms as hit stop;
+  input sending and authoritative simulation continue normally.
 - Window resize updates camera aspect/projection and renderer size.
 
 ## Lighting and shadows
@@ -198,7 +204,8 @@ The client owns one `THREE.Points` object backed by fixed typed arrays for 512 p
 `updateParticles()` applies gravity and `position += velocity * delta`, then marks GPU buffer attributes for upload.
 
 Bullet material and particle color depend on its public `weapon` field: yellow
-for pistol, orange for shotgun, and cyan for machine gun. Current effects:
+for pistol, orange for shotgun, and cyan for machine gun. Its public `ownerId`
+lets the client recognize local shots. Current effects:
 
 - New bullet: six weapon-colored particles at its spawn coordinate.
 - Every live bullet, every frame: one short-lived weapon-colored trail particle.
@@ -208,6 +215,19 @@ for pistol, orange for shotgun, and cyan for machine gun. Current effects:
 Bullet/enemy removal is inferred from full snapshots, not an explicit event
 protocol. Bullet removal deliberately does not claim whether it hit or exhausted
 its range.
+
+## Audio
+
+The client uses the browser's native Web Audio API, with no audio files or
+additional dependency. The audio context and quiet four-note synthesized BGM
+start only after the first pointer or keyboard gesture to satisfy browser
+autoplay policy.
+
+Synthesized cues cover local gunshots, enemy hits/deaths, local damage, coin
+pickup, and weapon selection. Shotgun pellets arriving in the same snapshot
+produce one gunshot cue. Enemy HP changes and lifecycle removal come from full
+snapshots; coin and damage cues compare consecutive local-player snapshots.
+There is no level-up cue because the game has no level system.
 
 ## HUD
 

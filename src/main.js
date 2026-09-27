@@ -16,6 +16,8 @@ const INPUT_MS = 50;
 const PING_MS = 2000;
 const RECONNECT_MS = 1000;
 const INPUT_DISTANCE = PLAYER_SPEED * (INPUT_MS / 1000);
+const CAMERA_FOLLOW_SPEED = 8;
+const BASE_CAMERA_FOV = 75;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcfe8f3);
@@ -27,6 +29,12 @@ const camera = new THREE.PerspectiveCamera(
   1000,
 );
 const cameraOffset = new THREE.Vector3(0, 12, 10);
+const cameraTarget = new THREE.Vector3();
+const cameraLookTarget = new THREE.Vector3();
+let cameraReady = false;
+let cameraShakeUntil = 0;
+let cameraKick = 0;
+let hitStopUntil = 0;
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -269,6 +277,54 @@ let nextInputSequence = 1;
 let lastInputAt = -Infinity;
 let pendingInputs = [];
 let selectedWeapon = weaponCycle[0];
+let previousHp;
+let previousCoins;
+
+let audioContext;
+let musicTimer;
+let musicStep = 0;
+
+function tone(frequency, duration, type = "sine", volume = 0.025) {
+  if (!audioContext || audioContext.state !== "running") return;
+
+  const oscillator = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  const now = audioContext.currentTime;
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, now);
+  gain.gain.setValueAtTime(volume, now);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+  oscillator.connect(gain).connect(audioContext.destination);
+  oscillator.start(now);
+  oscillator.stop(now + duration);
+}
+
+function playSound(name, weapon = "pistol") {
+  const shotPitch = { pistol: 150, shotgun: 90, machineGun: 220 };
+  if (name === "shot") tone(shotPitch[weapon] ?? 150, 0.08, "sawtooth", 0.045);
+  if (name === "hit") tone(110, 0.06, "square", 0.025);
+  if (name === "death") tone(70, 0.25, "sawtooth", 0.04);
+  if (name === "damage") tone(55, 0.18, "square", 0.04);
+  if (name === "coin") {
+    tone(660, 0.1, "sine", 0.035);
+    setTimeout(() => tone(880, 0.12, "sine", 0.03), 70);
+  }
+  if (name === "ui") tone(520, 0.04, "sine", 0.02);
+}
+
+function enableAudio() {
+  audioContext ??= new AudioContext();
+  audioContext.resume();
+  if (musicTimer) return;
+
+  const notes = [110, 138.59, 164.81, 138.59];
+  musicTimer = setInterval(() => {
+    tone(notes[musicStep++ % notes.length], 0.35, "triangle", 0.008);
+  }, 400);
+}
+
+window.addEventListener("pointerdown", enableAudio, { once: true });
+window.addEventListener("keydown", enableAudio, { once: true });
 
 function createPlayerModel() {
   const model = clone(playerModel);
@@ -374,7 +430,7 @@ function syncMeshes(items, meshes, createMesh, y, onRemove) {
   }
 }
 
-function syncInstances(items, instances, y, onCreate, onRemove) {
+function syncInstances(items, instances, y, onCreate, onRemove, onUpdate) {
   syncInstanceStore(
     items,
     instances,
@@ -388,7 +444,10 @@ function syncInstances(items, instances, y, onCreate, onRemove) {
       onCreate?.(instance, item);
       return instance;
     },
-    (instance, item) => instance.targetPosition.set(item.x, y, item.z),
+    (instance, item) => {
+      instance.targetPosition.set(item.x, y, item.z);
+      onUpdate?.(instance, item);
+    },
     onRemove,
   );
 }
@@ -414,6 +473,10 @@ function updateInstances(mesh, instances, interpolation) {
 }
 
 function renderState(state) {
+  let enemyDied = false;
+  let enemyWasHit = false;
+  let localShotWeapon;
+
   syncMeshes(state.players, playerMeshes, createPlayerModel, 0);
   for (const player of state.players) {
     playerMeshes.get(player.id).userData.dead = player.hp === 0;
@@ -422,8 +485,11 @@ function renderState(state) {
     state.enemies,
     enemies,
     0.5,
-    undefined,
-    (enemy) =>
+    (enemy, item) => {
+      enemy.hp = item.hp;
+    },
+    (enemy) => {
+      enemyDied = true;
       emitParticles(
         enemy.position.x,
         enemy.position.y,
@@ -432,17 +498,23 @@ function renderState(state) {
         18,
         3,
         0.55,
-      ),
+      );
+    },
+    (enemy, item) => {
+      if (item.hp < enemy.hp) enemyWasHit = true;
+      enemy.hp = item.hp;
+    },
   );
   syncInstances(
     state.bullets,
     bullets,
     0.5,
-    (bullet, { x, z, weapon }) => {
+    (bullet, { x, z, weapon, ownerId }) => {
       const style = weaponStyles[weapon] ?? weaponStyles.pistol;
       emitParticles(x, 0.5, z, style.color, 6, 2);
       bullet.color = style.bulletColor;
       bullet.trailColor = style.color;
+      if (ownerId === playerId) localShotWeapon = weapon;
     },
     (bullet) =>
       emitParticles(
@@ -455,6 +527,19 @@ function renderState(state) {
       ),
   );
   syncInstances(state.coins, coins, 0.08);
+
+  if (enemyWasHit) {
+    playSound("hit");
+    hitStopUntil = performance.now() + 35;
+  }
+  if (enemyDied) {
+    playSound("death");
+    cameraShakeUntil = performance.now() + 100;
+  }
+  if (localShotWeapon) {
+    playSound("shot", localShotWeapon);
+    cameraKick = Math.max(cameraKick, localShotWeapon === "shotgun" ? 1 : 0.5);
+  }
 
   const player = state.players.find(({ id }) => id === playerId);
   if (!player) return;
@@ -473,6 +558,15 @@ function renderState(state) {
   timerElement.textContent = state.elapsedSeconds;
   weaponElement.textContent = weaponStyles[player.weapon]?.label ?? "Pistol";
   localPlayerAlive = player.hp > 0;
+  if (previousHp !== undefined && player.hp < previousHp) {
+    playSound("damage");
+    cameraShakeUntil = performance.now() + 100;
+  }
+  if (previousCoins !== undefined && player.coins > previousCoins) {
+    playSound("coin");
+  }
+  previousHp = player.hp;
+  previousCoins = player.coins;
 }
 
 const keys = new Set();
@@ -496,6 +590,9 @@ function connectSocket() {
   pendingInputs = [];
   selectedWeapon = weaponCycle[0];
   localPlayerAlive = true;
+  previousHp = undefined;
+  previousCoins = undefined;
+  cameraReady = false;
   setConnectionStatus("Connecting…", "connecting");
   latencyElement.textContent = "--";
 
@@ -580,6 +677,7 @@ window.addEventListener("keydown", (event) => {
       const currentIndex = weaponCycle.indexOf(selectedWeapon);
       selectedWeapon = weaponCycle[(currentIndex + 1) % weaponCycle.length];
       socket.send(JSON.stringify({ type: "weapon", weapon: selectedWeapon }));
+      playSound("ui");
     }
     return;
   }
@@ -601,7 +699,8 @@ window.addEventListener("blur", () => {
 function animate() {
   requestAnimationFrame(animate);
   const delta = Math.min(clock.getDelta(), 0.1);
-  const interpolation = 1 - Math.exp(-15 * delta);
+  const visualDelta = performance.now() < hitStopUntil ? 0 : delta;
+  const interpolation = 1 - Math.exp(-15 * visualDelta);
   sendInput(performance.now());
 
   for (const [id, mesh] of playerMeshes) {
@@ -621,7 +720,7 @@ function animate() {
     if (id !== playerId) {
       mesh.position.lerp(mesh.userData.targetPosition, interpolation);
     }
-    mesh.userData.animation.mixer.update(delta);
+    mesh.userData.animation.mixer.update(visualDelta);
   }
   updateInstances(enemyInstances, enemies, interpolation);
   updateInstances(bulletInstances, bullets, interpolation);
@@ -645,15 +744,43 @@ function animate() {
     } else {
       localPlayer.position.lerp(
         localPlayer.userData.targetPosition,
-        1 - Math.exp(-25 * delta),
+        1 - Math.exp(-25 * visualDelta),
       );
     }
 
-    camera.position.copy(localPlayer.position).add(cameraOffset);
-    camera.lookAt(localPlayer.position);
+    cameraTarget.copy(localPlayer.position).add(cameraOffset);
+    cameraLookTarget.lerp(
+      localPlayer.position,
+      1 - Math.exp(-CAMERA_FOLLOW_SPEED * delta),
+    );
+    cameraTarget.z += cameraKick * 0.35;
+    cameraKick *= Math.exp(-12 * delta);
+
+    if (!cameraReady) {
+      camera.position.copy(cameraTarget);
+      cameraLookTarget.copy(localPlayer.position);
+      cameraReady = true;
+    } else {
+      camera.position.lerp(
+        cameraTarget,
+        1 - Math.exp(-CAMERA_FOLLOW_SPEED * delta),
+      );
+    }
+    if (performance.now() < cameraShakeUntil) {
+      camera.position.x += (Math.random() - 0.5) * 0.25;
+      camera.position.y += (Math.random() - 0.5) * 0.15;
+      camera.position.z += (Math.random() - 0.5) * 0.25;
+    }
+    camera.fov = THREE.MathUtils.lerp(
+      camera.fov,
+      BASE_CAMERA_FOV + cameraKick * 2,
+      1 - Math.exp(-10 * delta),
+    );
+    camera.updateProjectionMatrix();
+    camera.lookAt(cameraLookTarget);
   }
 
-  updateParticles(delta);
+  updateParticles(visualDelta);
   renderer.render(scene, camera);
 }
 

@@ -53,7 +53,7 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 | Path | Responsibility |
 |---|---|
 | `server.js` | WebSocket server, authoritative state, game loop, validation, combat, spawning, collection. |
-| `src/main.js` | Scene setup, asset loading, network client, input prediction, reconciliation, interpolation, animation, VFX, camera, rendering. |
+| `src/main.js` | Scene setup, asset loading, network client, input prediction, reconciliation, interpolation, animation, VFX, camera, audio, rendering. |
 | `src/instance-store.js` | Capacity-bounded lifecycle reconciliation for instanced dynamic entities. |
 | `index.html` | Full-screen canvas host and DOM HUD. |
 | `test/multiplayer.test.js` | Server-authority, weapon steering/selection, movement acknowledgement, and shared-world integration test. |

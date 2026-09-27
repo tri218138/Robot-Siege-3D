@@ -264,6 +264,7 @@ function shoot(now) {
     for (const direction of weaponDirections(player.weapon, player, target)) {
       const bullet = {
         id: `bullet-${++nextEntityId}`,
+        ownerId: player.id,
         weapon: player.weapon,
         x: player.x,
         z: player.z,

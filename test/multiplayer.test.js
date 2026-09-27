@@ -139,6 +139,15 @@ test("server owns movement and broadcasts one shared world", async () => {
     "shotgun",
   );
 
+  const firingState = await nextMessage(
+    playerB,
+    ({ type, bullets }) =>
+      type === "state" && bullets.some(({ ownerId }) => ownerId === playerId),
+  );
+  assert.ok(
+    firingState.bullets.some(({ ownerId }) => ownerId === playerId),
+  );
+
   const sharedStates = await Promise.all([
     nextMessage(playerA, ({ type, enemies }) => type === "state" && enemies.length > 0),
     nextMessage(playerB, ({ type, enemies }) => type === "state" && enemies.length > 0),
