@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update Knowledge"
+  short_description: "Keep project system knowledge aligned with code"
+  default_prompt: "Use $update-knowledge to synchronize project knowledge docs with the current implementation."
