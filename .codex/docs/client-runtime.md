@@ -119,6 +119,12 @@ moveZ = S - W
 
 Each message receives a monotonically increasing input sequence.
 
+Space cycles weapons independently of movement in a closed loop: `pistol` →
+`shotgun` → `machineGun` → `pistol`. Repeated keydown events are ignored. The
+client tracks its latest requested weapon so consecutive presses keep advancing
+the loop, sends only the requested ID, and waits for the authoritative player
+snapshot before updating the HUD.
+
 ## Local prediction and reconciliation
 
 Immediately after sending a valid input, the client stores it in `pendingInputs` and applies it to the local player's target position when the player is alive.
@@ -160,20 +166,25 @@ The client owns one `THREE.Points` object backed by fixed typed arrays for 512 p
 
 `updateParticles()` applies gravity and `position += velocity * delta`, then marks GPU buffer attributes for upload.
 
-Current effects:
+Bullet material and particle color depend on its public `weapon` field: yellow
+for pistol, orange for shotgun, and cyan for machine gun. Current effects:
 
-- New bullet: six yellow particles at its spawn coordinate (muzzle flash approximation).
-- Every live bullet, every frame: one short-lived yellow particle (trail).
-- Removed bullet: five orange particles at its last visible position (hit approximation).
+- New bullet: six weapon-colored particles at its spawn coordinate.
+- Every live bullet, every frame: one short-lived weapon-colored trail particle.
+- Removed bullet: five weapon-colored particles as a generic despawn effect.
 - Removed enemy: eighteen orange particles at its last visible position (death burst).
 
-Bullet/enemy removal is inferred from full snapshots, not an explicit event protocol. A future despawn mechanic must add a reason/event before reusing these assumptions.
+Bullet/enemy removal is inferred from full snapshots, not an explicit event
+protocol. Bullet removal deliberately does not claim whether it hit or exhausted
+its range.
 
 ## HUD
 
-`index.html` provides an accessible fixed overlay with HP, coin count, and elapsed seconds out of 60.
+`index.html` provides an accessible fixed overlay with HP, coin count, selected
+weapon and its Space control, and elapsed seconds out of 60.
 
-The client updates it from the local authoritative player and snapshot clock. There is currently no loading, connection, victory, defeat, or reconnect UI.
+The client updates it from the local authoritative player and snapshot clock.
+There is currently no loading, connection, victory, defeat, or reconnect UI.
 
 ## Current limitations
 

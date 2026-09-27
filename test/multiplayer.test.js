@@ -4,7 +4,8 @@ import test from "node:test";
 import { WebSocket } from "ws";
 
 process.env.PORT = "0";
-const { enemySeparation, server } = await import("../server.js");
+const { enemySeparation, server, WEAPONS, weaponDirections } =
+  await import("../server.js");
 await once(server, "listening");
 
 function nextMessage(socket, predicate) {
@@ -43,6 +44,43 @@ test("enemy separation handles overlap and ignores distant enemies", () => {
   );
 });
 
+test("weapon configuration creates the five-pellet shotgun spread", () => {
+  const directions = weaponDirections(
+    "shotgun",
+    { x: 0, z: 0 },
+    { x: 1, z: 0 },
+  );
+
+  assert.deepEqual(
+    [
+      WEAPONS.pistol.damage,
+      WEAPONS.pistol.fireRate,
+      WEAPONS.pistol.range,
+      WEAPONS.shotgun.damage,
+      WEAPONS.shotgun.projectiles,
+      WEAPONS.shotgun.spread,
+      WEAPONS.machineGun.damage,
+      WEAPONS.machineGun.fireRate,
+      WEAPONS.machineGun.range,
+    ],
+    [10, 2, 10, 6, 5, 25, 4, 10, 12],
+  );
+  assert.equal(directions.length, 5);
+  assert.ok(
+    Math.abs(
+      Math.atan2(directions[0].z, directions[0].x) +
+        (12.5 * Math.PI) / 180,
+    ) < 1e-12,
+  );
+  assert.deepEqual(directions[2], { x: 1, z: 0 });
+  assert.ok(
+    Math.abs(
+      Math.atan2(directions[4].z, directions[4].x) -
+        (12.5 * Math.PI) / 180,
+    ) < 1e-12,
+  );
+});
+
 test("server owns movement and broadcasts one shared world", async () => {
   const url = `ws://127.0.0.1:${server.address().port}`;
   const playerA = new WebSocket(url);
@@ -72,6 +110,30 @@ test("server owns movement and broadcasts one shared world", async () => {
   const movedPlayer = (await movedState).players.find(({ id }) => id === playerId);
   assert.ok(movedPlayer.x < 1);
   assert.equal(movedPlayer.lastProcessedInput, 1);
+
+  const shotgunState = nextMessage(
+    playerB,
+    ({ type, players }) =>
+      type === "state" &&
+      players.find(({ id }) => id === playerId)?.weapon === "shotgun",
+  );
+  playerA.send(JSON.stringify({ type: "weapon", weapon: "shotgun" }));
+  const selectedWeaponState = await shotgunState;
+  assert.equal(
+    selectedWeaponState.players.find(({ id }) => id === playerId).weapon,
+    "shotgun",
+  );
+
+  const stateAfterInvalidWeapon = nextMessage(
+    playerB,
+    ({ type, sequence }) =>
+      type === "state" && sequence > selectedWeaponState.sequence,
+  );
+  playerA.send(JSON.stringify({ type: "weapon", weapon: "laser" }));
+  assert.equal(
+    (await stateAfterInvalidWeapon).players.find(({ id }) => id === playerId).weapon,
+    "shotgun",
+  );
 
   const sharedStates = await Promise.all([
     nextMessage(playerA, ({ type, enemies }) => type === "state" && enemies.length > 0),

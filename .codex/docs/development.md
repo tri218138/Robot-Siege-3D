@@ -91,7 +91,9 @@ Use a browser smoke test for changes involving WebGL, GLB loading, animation, ca
 pure separation steering helper, and connects two clients. It verifies:
 
 - Overlapping enemies receive opposite separation vectors while distant enemies do not contribute.
+- Weapon fire rates and the shotgun's five evenly distributed directions.
 - A spoofed client message cannot set position or HP.
+- Valid weapon selection is shared while an unknown weapon is ignored.
 - Valid sequenced input moves the authoritative player by a bounded amount.
 - `lastProcessedInput` acknowledges the processed input.
 - Two clients receive the same enemy collection for the shared world.

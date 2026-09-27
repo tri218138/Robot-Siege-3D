@@ -42,6 +42,19 @@ The server rejects stale/non-integer sequences and non-finite axes, then clamps 
 
 Clients must not send positions or gameplay state. Messages such as `{ "type": "move", "x": 200, "hp": 999999 }` are ignored.
 
+## Client-to-server: weapon selection
+
+```json
+{
+  "type": "weapon",
+  "weapon": "shotgun"
+}
+```
+
+Valid IDs are `pistol`, `shotgun`, and `machineGun`. Selection messages are
+idempotent and do not use the movement sequence. The server ignores unknown
+IDs and does not reset the current firing cooldown when switching.
+
 ## Server-to-client: full state snapshot
 
 ```json
@@ -56,6 +69,7 @@ Clients must not send positions or gameplay state. Messages such as `{ "type": "
       "z": -0.3,
       "hp": 90,
       "coins": 2,
+      "weapon": "shotgun",
       "lastProcessedInput": 18
     }
   ],
@@ -70,7 +84,7 @@ Clients must not send positions or gameplay state. Messages such as `{ "type": "
   "bullets": [
     {
       "id": "bullet-8",
-      "targetId": "enemy-7",
+      "weapon": "shotgun",
       "x": 2.5,
       "z": 0.2
     }
@@ -131,7 +145,10 @@ Snapshots are complete collections, not deltas:
 - Existing ID: update its target position/state.
 - Missing prior ID: remove the client object.
 
-The current client uses missing bullet/enemy IDs as hit/death VFX signals. If future rules can remove entities for timeout, culling, room transfer, or administrative reasons, extend the protocol with explicit lifecycle reasons or events.
+The current client uses a missing bullet ID for a generic weapon-colored despawn
+effect because removal may mean a hit or exhausted range. A missing enemy ID
+still drives the death burst. If future rules add other enemy removal causes,
+extend the protocol with explicit lifecycle reasons or events.
 
 ## Protocol change checklist
 

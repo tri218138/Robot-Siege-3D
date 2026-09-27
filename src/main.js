@@ -6,6 +6,7 @@ import { clone } from "three/addons/utils/SkeletonUtils.js";
 const hpElement = document.querySelector("#hp");
 const coinCountElement = document.querySelector("#coin-count");
 const timerElement = document.querySelector("#timer");
+const weaponElement = document.querySelector("#weapon");
 const PLAYER_SPEED = 3;
 const MAP_LIMIT = 9.5;
 const INPUT_MS = 50;
@@ -150,7 +151,24 @@ addEnvironmentModel(barrelAsset.scene, -8.1, -10.7, 0.5, -0.3);
 const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
 const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
 const bulletGeometry = new THREE.SphereGeometry(0.15, 8, 8);
-const bulletMaterial = new THREE.MeshStandardMaterial({ color: 0xffcc33 });
+const weaponStyles = {
+  pistol: {
+    label: "Pistol",
+    color: new THREE.Color(0xffdd55),
+    material: new THREE.MeshStandardMaterial({ color: 0xffcc33 }),
+  },
+  shotgun: {
+    label: "Shotgun",
+    color: new THREE.Color(0xff8844),
+    material: new THREE.MeshStandardMaterial({ color: 0xff6633 }),
+  },
+  machineGun: {
+    label: "Machine Gun",
+    color: new THREE.Color(0x55ddff),
+    material: new THREE.MeshStandardMaterial({ color: 0x33bbff }),
+  },
+};
+const weaponCycle = ["pistol", "shotgun", "machineGun"];
 const coinGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16);
 const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700 });
 
@@ -187,7 +205,6 @@ const particles = new THREE.Points(
 particles.frustumCulled = false;
 scene.add(particles);
 
-const trailColor = new THREE.Color(0xffdd55);
 const hitColor = new THREE.Color(0xff6633);
 let nextParticle = 0;
 
@@ -222,6 +239,7 @@ let lastSnapshotSequence = -1;
 let nextInputSequence = 1;
 let lastInputAt = -Infinity;
 let pendingInputs = [];
+let selectedWeapon = weaponCycle[0];
 
 function createPlayerModel() {
   const model = clone(playerModel);
@@ -356,9 +374,12 @@ function renderState(state) {
   syncMeshes(
     state.bullets,
     bulletMeshes,
-    ({ x, z }) => {
-      emitParticles(x, 0.5, z, trailColor, 6, 2);
-      return new THREE.Mesh(bulletGeometry, bulletMaterial);
+    ({ x, z, weapon }) => {
+      const style = weaponStyles[weapon] ?? weaponStyles.pistol;
+      emitParticles(x, 0.5, z, style.color, 6, 2);
+      const bullet = new THREE.Mesh(bulletGeometry, style.material);
+      bullet.userData.trailColor = style.color;
+      return bullet;
     },
     0.5,
     (bullet) =>
@@ -366,7 +387,7 @@ function renderState(state) {
         bullet.position.x,
         bullet.position.y,
         bullet.position.z,
-        hitColor,
+        bullet.userData.trailColor,
         5,
         1.5,
       ),
@@ -397,6 +418,7 @@ function renderState(state) {
   hpElement.textContent = player.hp;
   coinCountElement.textContent = player.coins;
   timerElement.textContent = state.elapsedSeconds;
+  weaponElement.textContent = weaponStyles[player.weapon]?.label ?? "Pistol";
   localPlayerAlive = player.hp > 0;
 }
 
@@ -441,6 +463,16 @@ function sendInput(now) {
 }
 
 window.addEventListener("keydown", (event) => {
+  if (event.code === "Space") {
+    event.preventDefault();
+    if (!event.repeat && socket.readyState === WebSocket.OPEN) {
+      const currentIndex = weaponCycle.indexOf(selectedWeapon);
+      selectedWeapon = weaponCycle[(currentIndex + 1) % weaponCycle.length];
+      socket.send(JSON.stringify({ type: "weapon", weapon: selectedWeapon }));
+    }
+    return;
+  }
+
   const key = event.key.toLowerCase();
   if (!"wasd".includes(key) || keys.has(key)) return;
   keys.add(key);
@@ -489,7 +521,7 @@ function animate() {
       mesh.position.x,
       mesh.position.y,
       mesh.position.z,
-      trailColor,
+      mesh.userData.trailColor,
       1,
       0.15,
       0.2,

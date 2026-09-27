@@ -9,9 +9,35 @@ const PLAYER_SPEED = 3;
 const ENEMY_SPEED = 1.2;
 const ENEMY_SEPARATION_RADIUS = 1.25;
 const ENEMY_SEPARATION_WEIGHT = 1.5;
-const BULLET_SPEED = 7;
 const MAP_LIMIT = 9.5;
 const GAME_DURATION_MS = 60_000;
+
+export const WEAPONS = Object.freeze({
+  pistol: {
+    damage: 10,
+    fireRate: 2,
+    range: 10,
+    projectileSpeed: 7,
+    projectiles: 1,
+    spread: 0,
+  },
+  shotgun: {
+    damage: 6,
+    fireRate: 1,
+    range: 7,
+    projectileSpeed: 7,
+    projectiles: 5,
+    spread: 25,
+  },
+  machineGun: {
+    damage: 4,
+    fireRate: 10,
+    range: 12,
+    projectileSpeed: 9,
+    projectiles: 1,
+    spread: 0,
+  },
+});
 
 // ponytail: One in-memory room is enough here; add rooms/storage for deployment.
 const players = new Map();
@@ -56,7 +82,16 @@ function gameState() {
       ({ inputQueue, lastReceivedInput, nextShotAt, ...player }) => player,
     ),
     enemies: [...enemies.values()].map(({ nextDamageAt, ...enemy }) => enemy),
-    bullets: [...bullets.values()],
+    bullets: [...bullets.values()].map(
+      ({
+        damage,
+        directionX,
+        directionZ,
+        projectileSpeed,
+        remainingRange,
+        ...bullet
+      }) => bullet,
+    ),
     coins: [...coins.values()],
   };
 }
@@ -107,7 +142,7 @@ function spawnEnemy() {
   enemies.set(enemy.id, enemy);
 }
 
-// ponytail: O(n²) is fine for this 30-enemy round; add a spatial grid if the
+// ponytail: O(n²) is fine for this short round; add a spatial grid if the
 // spawn ceiling grows enough to show up in profiling.
 export function enemySeparation(enemy, allEnemies) {
   let x = 0;
@@ -131,6 +166,20 @@ export function enemySeparation(enemy, allEnemies) {
   }
 
   return { x, z };
+}
+
+export function weaponDirections(weaponId, source, target) {
+  const weapon = WEAPONS[weaponId];
+  const aim = Math.atan2(target.z - source.z, target.x - source.x);
+  const spread = (weapon.spread * Math.PI) / 180;
+  const firstAngle = aim - spread / 2;
+  const angleStep =
+    weapon.projectiles === 1 ? 0 : spread / (weapon.projectiles - 1);
+
+  return Array.from({ length: weapon.projectiles }, (_, index) => {
+    const angle = firstAngle + angleStep * index;
+    return { x: Math.cos(angle), z: Math.sin(angle) };
+  });
 }
 
 function updatePlayers() {
@@ -208,43 +257,49 @@ function shoot(now) {
     if (player.hp === 0 || now < player.nextShotAt) continue;
     const target = findNearest(enemies.values(), player);
     if (!target) continue;
+    const weapon = WEAPONS[player.weapon];
+    const distance = Math.hypot(target.x - player.x, target.z - player.z);
+    if (distance > weapon.range) continue;
 
-    const bullet = {
-      id: `bullet-${++nextEntityId}`,
-      targetId: target.id,
-      x: player.x,
-      z: player.z,
-    };
-    bullets.set(bullet.id, bullet);
-    player.nextShotAt = now + 500;
+    for (const direction of weaponDirections(player.weapon, player, target)) {
+      const bullet = {
+        id: `bullet-${++nextEntityId}`,
+        weapon: player.weapon,
+        x: player.x,
+        z: player.z,
+        directionX: direction.x,
+        directionZ: direction.z,
+        damage: weapon.damage,
+        projectileSpeed: weapon.projectileSpeed,
+        remainingRange: weapon.range,
+      };
+      bullets.set(bullet.id, bullet);
+    }
+    player.nextShotAt = now + 1000 / weapon.fireRate;
   }
 }
 
 function updateBullets(delta) {
   for (const bullet of bullets.values()) {
-    const target = enemies.get(bullet.targetId);
+    const step = Math.min(bullet.projectileSpeed * delta, bullet.remainingRange);
+    bullet.x += bullet.directionX * step;
+    bullet.z += bullet.directionZ * step;
+    bullet.remainingRange -= step;
 
-    if (!target) {
-      bullets.delete(bullet.id);
-      continue;
-    }
-
-    const x = target.x - bullet.x;
-    const z = target.z - bullet.z;
-    const distance = Math.hypot(x, z);
-    const step = BULLET_SPEED * delta;
-
-    if (distance <= step + 0.6) {
-      target.hp -= 10;
+    const target = findNearest(enemies.values(), bullet);
+    if (
+      target &&
+      (target.x - bullet.x) ** 2 + (target.z - bullet.z) ** 2 <= 0.6 ** 2
+    ) {
+      target.hp -= bullet.damage;
       bullets.delete(bullet.id);
 
       if (target.hp <= 0) {
         coins.set(target.id, { id: target.id, x: target.x, z: target.z });
         enemies.delete(target.id);
       }
-    } else {
-      bullet.x += (x / distance) * step;
-      bullet.z += (z / distance) * step;
+    } else if (bullet.remainingRange <= 0) {
+      bullets.delete(bullet.id);
     }
   }
 }
@@ -303,6 +358,7 @@ server.on("connection", (socket) => {
     z: 0,
     hp: 100,
     coins: 0,
+    weapon: "pistol",
     inputQueue: [],
     lastReceivedInput: 0,
     lastProcessedInput: 0,
@@ -318,6 +374,12 @@ server.on("connection", (socket) => {
     try {
       message = JSON.parse(rawMessage.toString());
     } catch {
+      return;
+    }
+
+    if (!message || typeof message !== "object") return;
+    if (message.type === "weapon") {
+      if (Object.hasOwn(WEAPONS, message.weapon)) player.weapon = message.weapon;
       return;
     }
 

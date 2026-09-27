@@ -7,7 +7,7 @@ The game is a browser-based multiplayer survival prototype. Clients render and p
 ```text
 Keyboard / Browser
        |
-       | input { sequence, moveX, moveZ }
+       | movement input / weapon selection
        v
 Three.js client  <------ full state snapshots ------  Node.js WebSocket server
   render only                                          authoritative simulation
@@ -19,7 +19,8 @@ Three.js client  <------ full state snapshots ------  Node.js WebSocket server
                                                                 +-- 60s clock
 ```
 
-The client never submits authoritative positions, HP, coins, enemies, bullets, or time. It submits movement intent only.
+The client never submits authoritative positions, HP, coins, enemies, bullets,
+weapon stats, or time. It submits movement and weapon-selection intent only.
 
 ## Component ownership
 
@@ -38,7 +39,8 @@ The client never submits authoritative positions, HP, coins, enemies, bullets, o
 2. Start Vite and load the browser client.
 3. The client creates the Three.js scene and loads `/models/player.glb` before opening its WebSocket.
 4. The server accepts the connection, resets the round only when this is the first connected player, creates the authoritative player, sends `init`, and sends an initial `state` snapshot.
-5. The client sends sequenced WASD intent at most once per 50 ms while keys are held and predicts the same movement locally.
+5. The client sends sequenced WASD intent at most once per 50 ms while keys are
+   held, predicts that movement locally, and cycles weapon requests with Space.
 6. The server consumes at most one queued input per 50 ms tick, updates the world, and broadcasts full snapshots every 100 ms.
 7. The client ignores stale snapshots, removes acknowledged pending inputs, reapplies unacknowledged inputs, interpolates rendered entities, updates animation/VFX/camera/HUD, and renders each animation frame.
 8. On disconnect, the server removes that player. A new round begins only after all players have disconnected and a later first player connects.
@@ -50,7 +52,7 @@ The client never submits authoritative positions, HP, coins, enemies, bullets, o
 | `server.js` | WebSocket server, authoritative state, game loop, validation, combat, spawning, collection. |
 | `src/main.js` | Scene setup, asset loading, network client, input prediction, reconciliation, interpolation, animation, VFX, camera, rendering. |
 | `index.html` | Full-screen canvas host and DOM HUD. |
-| `test/multiplayer.test.js` | Server-authority, movement acknowledgement, and shared-world integration test. |
+| `test/multiplayer.test.js` | Server-authority, weapon steering/selection, movement acknowledgement, and shared-world integration test. |
 | `public/models/player.glb` | Rigged RobotExpressive player asset served by Vite at `/models/player.glb`. |
 | `public/models/README.md` | Player asset source and license. |
 | `package.json` | Runtime dependencies and development commands. |
@@ -63,6 +65,8 @@ The client never submits authoritative positions, HP, coins, enemies, bullets, o
 
 - Never accept client-provided positions, HP, coin totals, entity state, or clock values.
 - Validate input messages before queueing them.
+- Accept only known weapon IDs; weapon damage, cadence, range, spread, and
+  projectiles remain server-owned.
 - Apply movement, combat, spawning, damage, death, and collection on the server.
 
 ### Coupled movement constants
@@ -82,7 +86,9 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Every network entity has a stable `id` and is stored client-side in a `Map` keyed by that ID.
 - Presence in a full snapshot creates or updates the rendered entity.
 - Absence from a later snapshot removes it.
-- Current hit/death VFX infer events from bullet/enemy removal. If the server later adds despawning for other reasons, introduce explicit event/reason data before assuming every removal is a hit or death.
+- Bullet removal drives only a generic despawn VFX because it can mean a hit or
+  exhausted range. Enemy removal currently drives a death burst; add an
+  explicit reason/event before introducing other enemy removal causes.
 
 ### Snapshot ordering
 

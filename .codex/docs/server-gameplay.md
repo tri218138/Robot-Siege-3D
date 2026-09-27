@@ -14,7 +14,6 @@
 | `ENEMY_SPEED` | 1.2 units/s | Enemy chase speed. |
 | `ENEMY_SEPARATION_RADIUS` | 1.25 units | Nearby-enemy radius used by separation steering. |
 | `ENEMY_SEPARATION_WEIGHT` | 1.5 | Relative strength of separation against player seeking. |
-| `BULLET_SPEED` | 7 units/s | Homing bullet speed. |
 | `MAP_LIMIT` | 9.5 | Clamp boundary on both X and Z. |
 | `GAME_DURATION_MS` | 60,000 ms | Round duration. |
 
@@ -22,9 +21,11 @@
 
 Four maps store the world by stable entity ID:
 
-- `players`: position, HP, coins, input queue/sequence state, and next shot time.
+- `players`: position, HP, coins, selected weapon, input queue/sequence state,
+  and next shot time.
 - `enemies`: position, HP, and next allowed contact-damage time.
-- `bullets`: position and target enemy ID.
+- `bullets`: position, weapon, fixed direction, damage, speed, and remaining
+  range.
 - `coins`: position; the coin ID reuses the defeated enemy ID.
 
 Round-level variables track start time, next spawn/snapshot time, entity numbering, snapshot sequence, and the previous tick time.
@@ -40,7 +41,8 @@ It is called only when a connection arrives while `players.size === 0`. Existing
 On connection:
 
 1. Reset the game if this is the first connected player.
-2. Create a UUID player at `x = players.size * 2`, `z = 0` with 100 HP and zero coins.
+2. Create a UUID player at `x = players.size * 2`, `z = 0` with 100 HP, zero
+   coins, and the pistol selected.
 3. Initialize its bounded input queue and sequence counters.
 4. Send an `init` message containing the assigned player ID.
 5. Send a full state snapshot to the new socket.
@@ -56,6 +58,11 @@ The server accepts only messages satisfying all conditions:
 - `moveX` and `moveZ` are finite numbers.
 
 Accepted axes are clamped to `[-1, 1]` before queueing. When the four-entry queue is full, the oldest entry is dropped and treated as processed so the client can stop replaying it during reconciliation.
+
+A `{ type: "weapon", weapon }` message is handled separately. The server accepts
+only own-property IDs in `WEAPONS`; an unknown ID leaves the authoritative
+selection unchanged. Switching weapons does not reset `nextShotAt`, preventing
+clients from bypassing the current fire cooldown.
 
 Unknown, malformed, stale, or spoofed messages are ignored without mutating the world.
 
@@ -74,7 +81,7 @@ Round still under 60 seconds?
   | yes
   +-- spawn enemy when due
   +-- move enemies / apply contact damage
-  +-- auto-shoot
+  +-- auto-shoot selected weapon
   +-- move bullets / apply bullet damage / drop coins
   +-- collect coins
         |
@@ -98,7 +105,9 @@ Both axes are clamped to `[-MAP_LIMIT, MAP_LIMIT]`. A dead player acknowledges q
 
 ## Enemy spawning and AI
 
-An enemy spawns immediately after reset and then every two seconds while the round is active.
+When an active tick finds no enemies, it creates an opening wave of ten. The
+normal two-second spawn schedule runs independently; because it is immediately
+due after reset, the first active tick adds one scheduled enemy after that wave.
 
 `spawnEnemy()` chooses one of four map sides and a random offset on the other axis. Each enemy starts with 30 HP.
 
@@ -125,16 +134,25 @@ clamped to zero.
 
 ## Automatic shooting and bullets
 
-Each living player independently shoots at the nearest living enemy no more than once every 500 ms.
+`WEAPONS` is the authoritative data table:
 
-A bullet stores the target enemy ID and starts at the player's current position. It homes toward the target each tick.
+| ID | Damage | Projectiles | Fire rate | Range | Speed | Spread |
+|---|---:|---:|---:|---:|---:|---:|
+| `pistol` | 10 | 1 | 2/s | 10 | 7 | 0° |
+| `shotgun` | 6 | 5 | 1/s | 7 | 7 | 25° |
+| `machineGun` | 4 | 1 | 10/s | 12 | 9 | 0° |
 
-- If the target no longer exists, delete the bullet.
-- Otherwise move it by `BULLET_SPEED * delta`.
-- If it can reach within the current step plus a 0.6 hit radius, apply 10 damage and delete the bullet.
-- At zero or less enemy HP, create a coin at that position and delete the enemy.
+Each living player automatically aims at the nearest living enemy. It fires
+only when that enemy is within the selected weapon's range and the shared
+per-player cooldown has elapsed. `weaponDirections()` distributes multi-shot
+projectiles evenly across the configured spread, so the shotgun uses angles
+from -12.5° through +12.5° around the aim direction.
 
-Three bullet hits defeat a fresh 30-HP enemy.
+Projectiles travel in their initial direction rather than homing. Each tick
+decrements remaining range by the distance moved. A projectile is deleted when
+it comes within 0.6 units of the nearest enemy or exhausts its range. On a hit,
+the server applies the projectile's damage; zero enemy HP creates a coin and
+removes the enemy.
 
 ## Coin collection
 
@@ -148,6 +166,8 @@ Collection increments the authoritative `player.coins`, deletes the coin, and st
 
 - Player `inputQueue`, `lastReceivedInput`, and `nextShotAt` are private.
 - Enemy `nextDamageAt` is private.
+- Bullet direction, damage, speed, and remaining range are private; clients
+  receive only ID, weapon, and position.
 - `lastProcessedInput` remains public because the client needs it for reconciliation.
 
 Numeric values are rounded to three decimal places during JSON serialization. See [network-protocol.md](network-protocol.md) for exact schemas.
@@ -158,8 +178,8 @@ Numeric values are rounded to three decimal places during JSON serialization. Se
 - No maximum player count, authentication, names, teams, or ownership metadata.
 - No explicit win/lose message.
 - No respawn or round restart while a player remains connected.
-- No explicit combat event stream; clients infer visual effects from entity lifecycle.
-- Enemy separation is an O(n²) scan with no spatial partitioning; the current
-  two-second spawn cadence caps a full round at about 30 simultaneous spawns.
+- No explicit combat event stream; clients infer generic projectile despawn and
+  enemy death effects from entity lifecycle.
+- Enemy separation is an O(n²) scan with no spatial partitioning.
 - No obstacle avoidance or pathfinding; static visual props remain outside the
   authoritative play area.
