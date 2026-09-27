@@ -29,7 +29,9 @@ The repository implements a small server-authoritative multiplayer survival game
 - Node.js WebSocket simulation using `ws`.
 - One in-memory room and a 60-second round.
 - WASD movement with client prediction and server reconciliation.
-- Enemies, automatic shooting, bullets, damage, coins, HUD, camera follow, animated GLB player models, and pooled particle VFX.
+- Enemies, automatic shooting, bullets, damage, coins, HUD, camera follow, a
+  static low-poly environment, animated GLB player models, and pooled particle
+  VFX.
 
 There is currently no database, persistence, authentication, room selection, reconnect flow, physics engine, React UI, or deployment configuration.
 

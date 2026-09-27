@@ -5,14 +5,16 @@
 ## Boot sequence
 
 1. Read the HUD elements from `index.html`.
-2. Create the Three.js scene, perspective camera, renderer, floor, hemisphere light, and directional light.
-3. Create shared enemy, bullet, coin, and particle resources.
-4. Load `/models/player.glb` with `GLTFLoader`.
-5. Normalize the player model to 1.8 world units tall, center it on X/Z, and place its lowest bound at ground level.
-6. Find the `Idle`, `Running`, and `Death` animation clips.
-7. Create client entity maps and runtime state.
-8. Open the WebSocket only after the model is loaded.
-9. Start the `requestAnimationFrame` loop and resize handler.
+2. Create the Three.js scene, perspective camera, renderer, lighting, grass
+   floor, and static environment.
+3. Load the four environment model files from `/models/environment/` in parallel.
+4. Clone and place the environment props, then create shared enemy, bullet, coin, and particle resources.
+5. Load `/models/player.glb` with the same `GLTFLoader`.
+6. Normalize the player model to 1.8 world units tall, center it on X/Z, and place its lowest bound at ground level.
+7. Find the `Idle`, `Running`, and `Death` animation clips.
+8. Create client entity maps and runtime state.
+9. Open the WebSocket only after all required models are loaded.
+10. Start the `requestAnimationFrame` loop and resize handler.
 
 If the model fails to load, module initialization currently rejects and the WebSocket/render loop does not start. There is no loading screen or fallback model.
 
@@ -20,7 +22,8 @@ If the model fails to load, module initialization currently rejects and the WebS
 
 - Renderer antialiasing is enabled.
 - Pixel ratio is capped at 2 to avoid excessive high-DPI rendering cost.
-- The map floor is a green 20×20 plane at `y = 0`.
+- The environment floor is a green 24×24 plane at `y = 0`; the authoritative
+  playable area remains bounded to ±9.5 on X/Z.
 - The local camera offset is `(0, 12, 10)`.
 - Each frame with a local player, camera position is `player.position + cameraOffset` and the camera looks at the player.
 - Window resize updates camera aspect/projection and renderer size.
@@ -32,14 +35,35 @@ provides fill, while a directional light at `(5, 10, 7)` and intensity 2.5
 casts the main shadows.
 
 The directional light uses a 1024×1024 shadow map. Its orthographic shadow
-camera spans `-12..12` horizontally and vertically, covering the 20×20
-playfield, with near/far planes `0.5/30` and `normalBias = 0.02`.
+camera spans `-13..13` horizontally and vertically, covering the 24×24
+environment, with near/far planes `0.5/30` and `normalBias = 0.02`.
 
 The floor receives shadows. Every mesh in the cloned GLB player model casts
 and receives shadows; enemies cast and receive them; coins cast them. Bullets
 and particles intentionally do not cast shadows. There is currently no HDRI,
 environment map, custom tone mapping, ambient occlusion, bloom, or color
 grading.
+
+## Static environment
+
+The grass plane and two crossing dirt roads remain simple Three.js geometry.
+All decorative props are downloaded CC0 models loaded through `GLTFLoader`:
+`forest.glb` supplies named tree and rock meshes, `wall.glb` and `barrel.glb`
+supply dungeon props, and `building_home_A_red.gltf` plus its buffer and texture
+supply the house. Their pinned sources and licenses are recorded in
+`public/models/environment/CREDITS.md`.
+
+The client clones these templates into eight wall pieces, eight trees, four
+rocks, one house, and two barrels. Models cast and receive shadows; the flat
+roads receive shadows but do not cast them. A missing named forest model throws
+during boot instead of silently producing an incomplete map.
+
+Roads are visual surfaces and do not affect movement. Walls sit just beyond
+the server's ±9.5 map clamp and represent that rectangular boundary visually.
+Trees, rocks, the house, and barrels stay outside the playable bound and have
+no colliders. Adding obstacles inside the playfield requires authoritative
+server collision plus matching client prediction; visual geometry must not be
+treated as gameplay collision by the client alone.
 
 ## Entity representation
 

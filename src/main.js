@@ -29,7 +29,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 document.body.appendChild(renderer.domElement);
 
 const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(20, 20),
+  new THREE.PlaneGeometry(24, 24),
   new THREE.MeshStandardMaterial({ color: 0x88aa66 }),
 );
 floor.rotation.x = -Math.PI / 2;
@@ -41,14 +41,109 @@ const sunlight = new THREE.DirectionalLight(0xffffff, 2.5);
 sunlight.position.set(5, 10, 7);
 sunlight.castShadow = true;
 sunlight.shadow.mapSize.set(1024, 1024);
-sunlight.shadow.camera.left = -12;
-sunlight.shadow.camera.right = 12;
-sunlight.shadow.camera.top = 12;
-sunlight.shadow.camera.bottom = -12;
+sunlight.shadow.camera.left = -13;
+sunlight.shadow.camera.right = 13;
+sunlight.shadow.camera.top = 13;
+sunlight.shadow.camera.bottom = -13;
 sunlight.shadow.camera.near = 0.5;
 sunlight.shadow.camera.far = 30;
 sunlight.shadow.normalBias = 0.02;
 scene.add(sunlight);
+
+const environment = new THREE.Group();
+scene.add(environment);
+const gltfLoader = new GLTFLoader();
+
+function addRoad(geometry, material, x, z) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(x, 0.015, z);
+  mesh.receiveShadow = true;
+  environment.add(mesh);
+}
+
+const roadMaterial = new THREE.MeshStandardMaterial({ color: 0xb8976a });
+addRoad(new THREE.BoxGeometry(2.6, 0.03, 24), roadMaterial, 0, 0);
+addRoad(new THREE.BoxGeometry(24, 0.03, 2.6), roadMaterial, 0, 2.5);
+
+const [forestAsset, wallAsset, barrelAsset, houseAsset] = await Promise.all([
+  gltfLoader.loadAsync("/models/environment/forest.glb"),
+  gltfLoader.loadAsync("/models/environment/wall.glb"),
+  gltfLoader.loadAsync("/models/environment/barrel.glb"),
+  gltfLoader.loadAsync("/models/environment/building_home_A_red.gltf"),
+]);
+
+function addEnvironmentModel(template, x, z, scale, rotationY = 0) {
+  const model = template.clone();
+  model.position.set(x, 0, z);
+  model.rotation.y = rotationY;
+  if (Array.isArray(scale)) model.scale.set(...scale);
+  else model.scale.setScalar(scale);
+  model.traverse((object) => {
+    if (!object.isMesh) return;
+    object.castShadow = true;
+    object.receiveShadow = true;
+  });
+  environment.add(model);
+}
+
+function forestModel(name) {
+  const model = forestAsset.scene.getObjectByName(name);
+  if (!model) throw new Error(`Missing environment model: ${name}`);
+  return model;
+}
+
+for (const [x, z, rotation] of [
+  [-6.5, -10.15, 0],
+  [6.5, -10.15, 0],
+  [-6.5, 10.15, 0],
+  [6.5, 10.15, 0],
+  [-10.15, -6.5, Math.PI / 2],
+  [-10.15, 6.5, Math.PI / 2],
+  [10.15, -6.5, Math.PI / 2],
+  [10.15, 6.5, Math.PI / 2],
+]) {
+  addEnvironmentModel(wallAsset.scene, x, z, [1.12, 0.32, 0.7], rotation);
+}
+
+// ponytail: Static props stay beyond MAP_LIMIT; the server boundary remains
+// the only collider until obstacle collision becomes server-authoritative.
+const treeModels = [
+  forestModel("Tree_1_A_Color1"),
+  forestModel("Tree_3_A_Color1"),
+  forestModel("Tree_4_A_Color1"),
+  forestModel("Tree_1_C_Color1"),
+];
+for (const [x, z, scale, modelIndex, rotation] of [
+  [-10.6, -3.5, 0.75, 0, 0.4],
+  [-10.6, 3.8, 0.8, 1, 1.2],
+  [-7, -10.7, 0.65, 2, 2.1],
+  [6.8, -10.7, 0.45, 3, 0.7],
+  [10.6, -3.5, 0.8, 1, 2.6],
+  [10.6, 4.5, 0.7, 0, 1.8],
+  [-7.5, 10.6, 0.7, 2, 0.2],
+  [6.5, 10.6, 0.48, 3, 2.9],
+]) {
+  addEnvironmentModel(treeModels[modelIndex], x, z, scale, rotation);
+}
+
+const rockModels = [
+  forestModel("Rock_1_D_Color1"),
+  forestModel("Rock_1_J_Color1"),
+  forestModel("Rock_2_C_Color1"),
+  forestModel("Rock_2_G_Color1"),
+];
+for (const [x, z, scale, modelIndex, rotation] of [
+  [-10.4, 8.7, 0.75, 0, 0.3],
+  [9.8, 9.8, 0.3, 1, 1.1],
+  [10.5, -8.8, 0.65, 2, 2.3],
+  [-8.8, -10.5, 0.28, 3, 0.8],
+]) {
+  addEnvironmentModel(rockModels[modelIndex], x, z, scale, rotation);
+}
+
+addEnvironmentModel(houseAsset.scene, -10.7, -10.7, 3, Math.PI / 5);
+addEnvironmentModel(barrelAsset.scene, -8.9, -10.7, 0.5, 0.2);
+addEnvironmentModel(barrelAsset.scene, -8.1, -10.7, 0.5, -0.3);
 
 const enemyGeometry = new THREE.BoxGeometry(1, 1, 1);
 const enemyMaterial = new THREE.MeshStandardMaterial({ color: 0xff4444 });
@@ -95,7 +190,7 @@ const hitColor = new THREE.Color(0xff6633);
 let nextParticle = 0;
 
 const { scene: playerModel, animations: playerAnimations } =
-  await new GLTFLoader().loadAsync("/models/player.glb");
+  await gltfLoader.loadAsync("/models/player.glb");
 const playerBounds = new THREE.Box3().setFromObject(playerModel);
 const playerSize = playerBounds.getSize(new THREE.Vector3());
 playerModel.scale.setScalar(1.8 / playerSize.y);
