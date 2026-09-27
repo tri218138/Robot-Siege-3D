@@ -280,47 +280,34 @@ let selectedWeapon = weaponCycle[0];
 let previousHp;
 let previousCoins;
 
-let audioContext;
-let musicTimer;
-let musicStep = 0;
-
-function tone(frequency, duration, type = "sine", volume = 0.025) {
-  if (!audioContext || audioContext.state !== "running") return;
-
-  const oscillator = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  const now = audioContext.currentTime;
-  oscillator.type = type;
-  oscillator.frequency.setValueAtTime(frequency, now);
-  gain.gain.setValueAtTime(volume, now);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-  oscillator.connect(gain).connect(audioContext.destination);
-  oscillator.start(now);
-  oscillator.stop(now + duration);
-}
+const sounds = Object.fromEntries(
+  Object.entries({
+    bgm: ["/audio/bgm.ogg", 0.18],
+    "shot-pistol": ["/audio/shot-pistol.ogg", 0.35],
+    "shot-shotgun": ["/audio/shot-shotgun.ogg", 0.45],
+    "shot-machineGun": ["/audio/shot-machine-gun.ogg", 0.3],
+    hit: ["/audio/hit.ogg", 0.35],
+    death: ["/audio/enemy-death.ogg", 0.45],
+    damage: ["/audio/damage.ogg", 0.4],
+    coin: ["/audio/coin.ogg", 0.35],
+    ui: ["/audio/ui-click.ogg", 0.3],
+  }).map(([name, [path, volume]]) => {
+    const sound = new Audio(path);
+    sound.volume = volume;
+    return [name, sound];
+  }),
+);
+sounds.bgm.loop = true;
 
 function playSound(name, weapon = "pistol") {
-  const shotPitch = { pistol: 150, shotgun: 90, machineGun: 220 };
-  if (name === "shot") tone(shotPitch[weapon] ?? 150, 0.08, "sawtooth", 0.045);
-  if (name === "hit") tone(110, 0.06, "square", 0.025);
-  if (name === "death") tone(70, 0.25, "sawtooth", 0.04);
-  if (name === "damage") tone(55, 0.18, "square", 0.04);
-  if (name === "coin") {
-    tone(660, 0.1, "sine", 0.035);
-    setTimeout(() => tone(880, 0.12, "sine", 0.03), 70);
-  }
-  if (name === "ui") tone(520, 0.04, "sine", 0.02);
+  const source = sounds[name === "shot" ? `shot-${weapon}` : name];
+  const sound = source.cloneNode();
+  sound.volume = source.volume;
+  sound.play().catch(() => {});
 }
 
 function enableAudio() {
-  audioContext ??= new AudioContext();
-  audioContext.resume();
-  if (musicTimer) return;
-
-  const notes = [110, 138.59, 164.81, 138.59];
-  musicTimer = setInterval(() => {
-    tone(notes[musicStep++ % notes.length], 0.35, "triangle", 0.008);
-  }, 400);
+  sounds.bgm.play().catch(() => {});
 }
 
 window.addEventListener("pointerdown", enableAudio, { once: true });

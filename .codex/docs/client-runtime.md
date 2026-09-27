@@ -218,13 +218,14 @@ its range.
 
 ## Audio
 
-The client uses the browser's native Web Audio API, with no audio files or
-additional dependency. The audio context and quiet four-note synthesized BGM
-start only after the first pointer or keyboard gesture to satisfy browser
-autoplay policy.
+The client preloads OGG files from `public/audio/` with native
+`HTMLAudioElement`; no audio dependency is installed. The looped BGM starts
+only after the first pointer or keyboard gesture to satisfy browser autoplay
+policy. `public/audio/CREDITS.md` records each source file and its CC0 license.
 
-Synthesized cues cover local gunshots, enemy hits/deaths, local damage, coin
-pickup, and weapon selection. Shotgun pellets arriving in the same snapshot
+Asset cues cover three distinct local gunshots, enemy hits/deaths, local
+damage, coin pickup, and weapon selection. Playback clones each SFX element so
+rapid shots can overlap. Shotgun pellets arriving in the same snapshot still
 produce one gunshot cue. Enemy HP changes and lifecycle removal come from full
 snapshots; coin and damage cues compare consecutive local-player snapshots.
 There is no level-up cue because the game has no level system.

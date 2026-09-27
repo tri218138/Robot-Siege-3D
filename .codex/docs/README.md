@@ -30,7 +30,7 @@ The repository implements a small server-authoritative multiplayer survival game
 - One in-memory room and a 60-second round.
 - WASD movement with client prediction and server reconciliation.
 - Enemies, three server-authoritative weapons, automatic shooting, bullets,
-  damage, coins, HUD, smoothed camera feedback, synthesized browser audio, a
+  damage, coins, HUD, smoothed camera feedback, CC0 audio assets, a
   static low-poly environment, animated GLB player models, instanced dynamic
   entities, pooled particle VFX, latency display, and automatic socket
   reconnection.

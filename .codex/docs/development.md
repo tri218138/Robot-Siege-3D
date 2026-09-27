@@ -73,6 +73,10 @@ client survived optimization. Outputs are built in a temporary directory and
 only replace runtime files after every model succeeds. The browser loader must
 keep its `MeshoptDecoder` configuration while these outputs are in use.
 
+Audio runtime files live in `public/audio/` and are served from `/audio/`.
+Keep their original filename mapping, source page, and license in
+`public/audio/CREDITS.md` when replacing or adding a sound.
+
 ## Verification
 
 Minimum checks after executable changes:
