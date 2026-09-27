@@ -87,8 +87,10 @@ Use a browser smoke test for changes involving WebGL, GLB loading, animation, ca
 
 ## Current automated coverage
 
-`test/multiplayer.test.js` starts the server on an ephemeral port and connects two clients. It verifies:
+`test/multiplayer.test.js` starts the server on an ephemeral port, exercises the
+pure separation steering helper, and connects two clients. It verifies:
 
+- Overlapping enemies receive opposite separation vectors while distant enemies do not contribute.
 - A spoofed client message cannot set position or HP.
 - Valid sequenced input moves the authoritative player by a bounded amount.
 - `lastProcessedInput` acknowledges the processed input.

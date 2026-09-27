@@ -4,7 +4,7 @@ import test from "node:test";
 import { WebSocket } from "ws";
 
 process.env.PORT = "0";
-const { server } = await import("../server.js");
+const { enemySeparation, server } = await import("../server.js");
 await once(server, "listening");
 
 function nextMessage(socket, predicate) {
@@ -19,6 +19,29 @@ function nextMessage(socket, predicate) {
     });
   });
 }
+
+test("enemy separation handles overlap and ignores distant enemies", () => {
+  const enemyA = { id: "enemy-1", x: 0, z: 0 };
+  const enemyB = { id: "enemy-2", x: 0, z: 0 };
+  const distantEnemy = { id: "enemy-3", x: 5, z: 5 };
+
+  assert.deepEqual(enemySeparation(enemyA, [enemyA, enemyB, distantEnemy]), {
+    x: -1,
+    z: 0,
+  });
+  assert.deepEqual(enemySeparation(enemyB, [enemyA, enemyB, distantEnemy]), {
+    x: 1,
+    z: 0,
+  });
+  assert.deepEqual(enemySeparation(distantEnemy, [enemyA, enemyB, distantEnemy]), {
+    x: 0,
+    z: 0,
+  });
+  assert.deepEqual(
+    enemySeparation(enemyA, [enemyA, { id: "enemy-4", x: 0.5, z: 0 }]),
+    { x: -0.6, z: 0 },
+  );
+});
 
 test("server owns movement and broadcasts one shared world", async () => {
   const url = `ws://127.0.0.1:${server.address().port}`;

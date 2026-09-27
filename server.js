@@ -7,6 +7,8 @@ const MAX_BUFFERED_BYTES = 64 * 1024;
 const MAX_INPUT_QUEUE = 4;
 const PLAYER_SPEED = 3;
 const ENEMY_SPEED = 1.2;
+const ENEMY_SEPARATION_RADIUS = 1.25;
+const ENEMY_SEPARATION_WEIGHT = 1.5;
 const BULLET_SPEED = 7;
 const MAP_LIMIT = 9.5;
 const GAME_DURATION_MS = 60_000;
@@ -105,6 +107,32 @@ function spawnEnemy() {
   enemies.set(enemy.id, enemy);
 }
 
+// ponytail: O(n²) is fine for this 30-enemy round; add a spatial grid if the
+// spawn ceiling grows enough to show up in profiling.
+export function enemySeparation(enemy, allEnemies) {
+  let x = 0;
+  let z = 0;
+
+  for (const other of allEnemies) {
+    if (other.id === enemy.id) continue;
+    const dx = enemy.x - other.x;
+    const dz = enemy.z - other.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance >= ENEMY_SEPARATION_RADIUS) continue;
+
+    if (distance === 0) {
+      x += enemy.id < other.id ? -1 : 1;
+      continue;
+    }
+
+    const strength = 1 - distance / ENEMY_SEPARATION_RADIUS;
+    x += (dx / distance) * strength;
+    z += (dz / distance) * strength;
+  }
+
+  return { x, z };
+}
+
 function updatePlayers() {
   for (const player of players.values()) {
     const input = player.inputQueue.shift();
@@ -138,6 +166,8 @@ function updateEnemies(delta, now) {
     const x = target.x - enemy.x;
     const z = target.z - enemy.z;
     const distance = Math.hypot(x, z);
+    let moveX = 0;
+    let moveZ = 0;
 
     if (distance < 1) {
       if (now >= enemy.nextDamageAt) {
@@ -145,8 +175,30 @@ function updateEnemies(delta, now) {
         enemy.nextDamageAt = now + 1000;
       }
     } else {
-      enemy.x += (x / distance) * ENEMY_SPEED * delta;
-      enemy.z += (z / distance) * ENEMY_SPEED * delta;
+      moveX = x / distance;
+      moveZ = z / distance;
+    }
+
+    const separation = enemySeparation(enemy, enemies.values());
+    moveX += separation.x * ENEMY_SEPARATION_WEIGHT;
+    moveZ += separation.z * ENEMY_SEPARATION_WEIGHT;
+    const moveLength = Math.hypot(moveX, moveZ);
+
+    if (moveLength > 0) {
+      enemy.x = Math.max(
+        -MAP_LIMIT,
+        Math.min(
+          MAP_LIMIT,
+          enemy.x + (moveX / moveLength) * ENEMY_SPEED * delta,
+        ),
+      );
+      enemy.z = Math.max(
+        -MAP_LIMIT,
+        Math.min(
+          MAP_LIMIT,
+          enemy.z + (moveZ / moveLength) * ENEMY_SPEED * delta,
+        ),
+      );
     }
   }
 }
@@ -217,6 +269,13 @@ function tick() {
 
   const gameRunning = now - startedAt < GAME_DURATION_MS;
   updatePlayers();
+
+  // Spawn 10 enemies at the beginning
+  if (enemies.size === 0) {
+    for (let i = 0; i < 10; i++) {
+      spawnEnemy();
+    }
+  }
 
   if (gameRunning) {
     if (now >= nextEnemyAt) {

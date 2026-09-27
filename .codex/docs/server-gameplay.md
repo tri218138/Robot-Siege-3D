@@ -12,6 +12,8 @@
 | `MAX_INPUT_QUEUE` | 4 | Maximum queued movement inputs per player. |
 | `PLAYER_SPEED` | 3 units/s | Authoritative player speed. |
 | `ENEMY_SPEED` | 1.2 units/s | Enemy chase speed. |
+| `ENEMY_SEPARATION_RADIUS` | 1.25 units | Nearby-enemy radius used by separation steering. |
+| `ENEMY_SEPARATION_WEIGHT` | 1.5 | Relative strength of separation against player seeking. |
 | `BULLET_SPEED` | 7 units/s | Homing bullet speed. |
 | `MAP_LIMIT` | 9.5 | Clamp boundary on both X and Z. |
 | `GAME_DURATION_MS` | 60,000 ms | Round duration. |
@@ -102,13 +104,24 @@ An enemy spawns immediately after reset and then every two seconds while the rou
 
 `findNearest()` compares squared XZ distance and ignores targets whose HP is zero. Enemies use it to chase the nearest living player.
 
-When an enemy is at least one unit away, it advances by:
+When an enemy is at least one unit away, its seek vector points toward the
+player. `enemySeparation()` also accumulates a distance-weighted vector away
+from every enemy within 1.25 units. Exact coordinate overlaps are split in a
+stable direction based on entity ID.
+
+The server combines the two steering inputs and normalizes the result:
 
 ```text
-normalized direction to player * ENEMY_SPEED * delta
+normalize(seek + separation * 1.5) * ENEMY_SPEED * delta
 ```
 
-Within one unit, it deals 10 damage at most once per second. Player HP is clamped to zero.
+This preserves the 1.2 units/s speed cap while causing a crowd to spread around
+its target. Separation remains active inside contact range; without nearby
+enemies, a contacting enemy stays in place. Enemy positions are clamped to the
+same map boundary as players.
+
+Within one unit, an enemy deals 10 damage at most once per second. Player HP is
+clamped to zero.
 
 ## Automatic shooting and bullets
 
@@ -146,3 +159,7 @@ Numeric values are rounded to three decimal places during JSON serialization. Se
 - No explicit win/lose message.
 - No respawn or round restart while a player remains connected.
 - No explicit combat event stream; clients infer visual effects from entity lifecycle.
+- Enemy separation is an O(n²) scan with no spatial partitioning; the current
+  two-second spawn cadence caps a full round at about 30 simultaneous spawns.
+- No obstacle avoidance or pathfinding; static visual props remain outside the
+  authoritative play area.
