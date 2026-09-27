@@ -94,6 +94,7 @@ pure separation steering helper, and connects two clients. It verifies:
 - Weapon fire rates and the shotgun's five evenly distributed directions.
 - A spoofed client message cannot set position or HP.
 - Valid weapon selection is shared while an unknown weapon is ignored.
+- A valid latency probe receives a same-socket pong echo.
 - Valid sequenced input moves the authoritative player by a bounded amount.
 - `lastProcessedInput` acknowledges the processed input.
 - Two clients receive the same enemy collection for the shared world.

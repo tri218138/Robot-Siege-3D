@@ -8,9 +8,13 @@ const hpElement = document.querySelector("#hp");
 const coinCountElement = document.querySelector("#coin-count");
 const timerElement = document.querySelector("#timer");
 const weaponElement = document.querySelector("#weapon");
+const connectionElement = document.querySelector("#connection");
+const latencyElement = document.querySelector("#latency");
 const PLAYER_SPEED = 3;
 const MAP_LIMIT = 9.5;
 const INPUT_MS = 50;
+const PING_MS = 2000;
+const RECONNECT_MS = 1000;
 const INPUT_DISTANCE = PLAYER_SPEED * (INPUT_MS / 1000);
 
 const scene = new THREE.Scene();
@@ -471,25 +475,83 @@ function renderState(state) {
   localPlayerAlive = player.hp > 0;
 }
 
-const socketProtocol = location.protocol === "https:" ? "wss" : "ws";
-const socket = new WebSocket(`${socketProtocol}://${location.hostname}:8080`);
-
-socket.addEventListener("message", (event) => {
-  const message = JSON.parse(event.data);
-
-  if (message.type === "init") playerId = message.playerId;
-  if (message.type === "state" && message.sequence > lastSnapshotSequence) {
-    lastSnapshotSequence = message.sequence;
-    renderState(message);
-  }
-});
-
 const keys = new Set();
+const socketProtocol = location.protocol === "https:" ? "wss" : "ws";
+const socketUrl = `${socketProtocol}://${location.hostname}:8080`;
+let socket;
+let pingTimer;
+let reconnectTimer;
+
+function setConnectionStatus(label, state) {
+  connectionElement.textContent = label;
+  connectionElement.dataset.state = state;
+}
+
+function connectSocket() {
+  clearTimeout(reconnectTimer);
+  playerId = undefined;
+  lastSnapshotSequence = -1;
+  nextInputSequence = 1;
+  lastInputAt = -Infinity;
+  pendingInputs = [];
+  selectedWeapon = weaponCycle[0];
+  localPlayerAlive = true;
+  setConnectionStatus("Connecting…", "connecting");
+  latencyElement.textContent = "--";
+
+  const connection = new WebSocket(socketUrl);
+  socket = connection;
+
+  connection.addEventListener("open", () => {
+    setConnectionStatus("Online", "online");
+
+    const ping = () => {
+      if (connection.readyState === WebSocket.OPEN) {
+        connection.send(
+          JSON.stringify({ type: "ping", sentAt: performance.now() }),
+        );
+      }
+    };
+    ping();
+    pingTimer = setInterval(ping, PING_MS);
+  });
+
+  connection.addEventListener("message", (event) => {
+    if (connection !== socket) return;
+    const message = JSON.parse(event.data);
+
+    if (message.type === "pong" && Number.isFinite(message.sentAt)) {
+      latencyElement.textContent = Math.max(
+        0,
+        Math.round(performance.now() - message.sentAt),
+      );
+      return;
+    }
+    if (message.type === "init") playerId = message.playerId;
+    if (message.type === "state" && message.sequence > lastSnapshotSequence) {
+      lastSnapshotSequence = message.sequence;
+      renderState(message);
+    }
+  });
+
+  connection.addEventListener("close", () => {
+    if (connection !== socket) return;
+    clearInterval(pingTimer);
+    keys.clear();
+    pendingInputs = [];
+    setConnectionStatus("Reconnecting…", "connecting");
+    latencyElement.textContent = "--";
+    // ponytail: Fixed retry is enough locally; add backoff for public hosting.
+    reconnectTimer = setTimeout(connectSocket, RECONNECT_MS);
+  });
+}
+
+connectSocket();
 
 function sendInput(now) {
   if (
     keys.size === 0 ||
-    socket.readyState !== WebSocket.OPEN ||
+    socket?.readyState !== WebSocket.OPEN ||
     now - lastInputAt < INPUT_MS
   ) {
     return;
@@ -514,7 +576,7 @@ function sendInput(now) {
 window.addEventListener("keydown", (event) => {
   if (event.code === "Space") {
     event.preventDefault();
-    if (!event.repeat && socket.readyState === WebSocket.OPEN) {
+    if (!event.repeat && socket?.readyState === WebSocket.OPEN) {
       const currentIndex = weaponCycle.indexOf(selectedWeapon);
       selectedWeapon = weaponCycle[(currentIndex + 1) % weaponCycle.length];
       socket.send(JSON.stringify({ type: "weapon", weapon: selectedWeapon }));

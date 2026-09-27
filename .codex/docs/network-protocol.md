@@ -55,6 +55,24 @@ Valid IDs are `pistol`, `shotgun`, and `machineGun`. Selection messages are
 idempotent and do not use the movement sequence. The server ignores unknown
 IDs and does not reset the current firing cooldown when switching.
 
+## Latency probe
+
+The browser sends an application-level probe every two seconds while connected:
+
+```json
+{ "type": "ping", "sentAt": 1234.5 }
+```
+
+For a finite numeric `sentAt`, the server echoes it only to that socket:
+
+```json
+{ "type": "pong", "sentAt": 1234.5 }
+```
+
+The value comes from the browser's monotonic `performance.now()` clock. The
+client subtracts the echoed value from its current clock, rounds the result,
+and displays the round-trip time. The probe never mutates gameplay state.
+
 ## Server-to-client: full state snapshot
 
 ```json
@@ -132,6 +150,7 @@ The acknowledgement can advance when an input is simulated or deliberately dropp
 ## Cadence and backpressure
 
 - Client sends input at most every 50 ms while movement keys are held.
+- Client sends a latency probe every 2 seconds.
 - Server simulates at 50 ms intervals.
 - Server normally broadcasts full snapshots every 100 ms.
 - A socket is skipped for that broadcast when `bufferedAmount >= 64 KiB`.

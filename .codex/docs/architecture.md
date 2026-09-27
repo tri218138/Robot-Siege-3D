@@ -38,12 +38,15 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 1. Start the WebSocket server on `127.0.0.1:8080`.
 2. Start Vite and load the browser client.
 3. The client creates the Three.js scene and loads `/models/player.glb` before opening its WebSocket.
-4. The server accepts the connection, resets the round only when this is the first connected player, creates the authoritative player, sends `init`, and sends an initial `state` snapshot.
+4. The server accepts the connection, resets the round only when this is the first connected player, creates the authoritative player, sends `init`, and sends an initial `state` snapshot. The client also starts periodic application-level ping requests.
 5. The client sends sequenced WASD intent at most once per 50 ms while keys are
    held, predicts that movement locally, and cycles weapon requests with Space.
 6. The server consumes at most one queued input per 50 ms tick, updates the world, and broadcasts full snapshots every 100 ms.
 7. The client ignores stale snapshots, removes acknowledged pending inputs, reapplies unacknowledged inputs, interpolates rendered entities, updates animation/VFX/camera/HUD, and renders each animation frame.
-8. On disconnect, the server removes that player. A new round begins only after all players have disconnected and a later first player connects.
+8. On disconnect, the server removes that player. The client clears pending
+   prediction and retries after one second. Reconnection creates a new player;
+   it joins the existing round when others remain, or starts a new round when
+   the room became empty.
 
 ## File map
 
@@ -96,6 +99,8 @@ Changing one side without the other causes prediction drift and visible reconcil
 
 - Server snapshot `sequence` values increase monotonically within a round.
 - The client ignores any state snapshot whose sequence is not newer than the latest applied snapshot.
+- The client resets its applied snapshot and input sequences for every new
+  socket because reconnect creates a new player connection.
 - Player `lastProcessedInput` acknowledges client input and drives reconciliation.
 
 ### Rigged player clones
@@ -117,7 +122,7 @@ Changing one side without the other causes prediction drift and visible reconcil
 - No persistence or recovery after process exit.
 - Full snapshots rather than delta compression.
 - Fixed ports in the browser/server development setup.
-- No reconnect/resume protocol.
+- Reconnect creates a new player; there is no identity or state resume protocol.
 - No spatial partitioning, physics engine, or LOD.
 
 These are deliberate prototype constraints. Upgrade them only when the requested feature or measured load requires it.

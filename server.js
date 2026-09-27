@@ -378,6 +378,15 @@ server.on("connection", (socket) => {
     }
 
     if (!message || typeof message !== "object") return;
+    if (message.type === "ping") {
+      if (
+        Number.isFinite(message.sentAt) &&
+        socket.readyState === WebSocket.OPEN
+      ) {
+        socket.send(JSON.stringify({ type: "pong", sentAt: message.sentAt }));
+      }
+      return;
+    }
     if (message.type === "weapon") {
       if (Object.hasOwn(WEAPONS, message.weapon)) player.weapon = message.weapon;
       return;

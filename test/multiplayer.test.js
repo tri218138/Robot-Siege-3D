@@ -90,6 +90,10 @@ test("server owns movement and broadcasts one shared world", async () => {
   await Promise.all([once(playerA, "open"), once(playerB, "open")]);
   const { playerId } = await initA;
 
+  const pong = nextMessage(playerA, ({ type }) => type === "pong");
+  playerA.send(JSON.stringify({ type: "ping", sentAt: 12345 }));
+  assert.deepEqual(await pong, { type: "pong", sentAt: 12345 });
+
   const stateAfterSpoof = nextMessage(
     playerB,
     ({ type, players }) => type === "state" && players.some(({ id }) => id === playerId),

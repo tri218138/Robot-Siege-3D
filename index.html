@@ -32,6 +32,14 @@
         border-radius: 10px;
         pointer-events: none;
       }
+
+      #connection[data-state="online"] {
+        color: #86efac;
+      }
+
+      #connection[data-state="connecting"] {
+        color: #fde68a;
+      }
     </style>
   </head>
   <body>
@@ -40,6 +48,10 @@
       <span>🪙 Coin: <strong id="coin-count">0</strong></span>
       <span>🔫 Weapon: <strong id="weapon">Pistol</strong> (Space)</span>
       <span>⏱ <strong id="timer">0</strong> / 60 sec</span>
+      <span>
+        🌐 <strong id="connection" data-state="connecting" role="status" aria-live="polite">Connecting…</strong>
+        · <strong id="latency">--</strong> ms
+      </span>
     </aside>
     <script type="module" src="/src/main.js"></script>
   </body>

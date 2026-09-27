@@ -14,7 +14,8 @@
 6. Normalize the player model to 1.8 world units tall, center it on X/Z, and place its lowest bound at ground level.
 7. Find the `Idle`, `Running`, and `Death` animation clips.
 8. Create client entity maps and runtime state.
-9. Open the WebSocket only after all required models are loaded.
+9. Open the WebSocket only after all required models are loaded, then maintain
+   its status, latency probe, and reconnect lifecycle.
 10. Start the `requestAnimationFrame` loop and resize handler.
 
 If the model fails to load, module initialization currently rejects and the WebSocket/render loop does not start. There is no loading screen or fallback model.
@@ -142,6 +143,19 @@ client tracks its latest requested weapon so consecutive presses keep advancing
 the loop, sends only the requested ID, and waits for the authoritative player
 snapshot before updating the HUD.
 
+## Connection lifecycle and latency
+
+`connectSocket()` opens the socket after scene assets are ready. Every new
+connection resets local player identity, snapshot/input sequences, pending
+prediction, weapon selection, and latency display. This is required because a
+reconnect receives a new server player rather than resuming the old one.
+
+While open, the client sends a monotonic timestamp every two seconds and shows
+the echoed round-trip time in the HUD. On close it clears held keys, pending
+inputs, and the ping timer, then retries after one second. The old rendered
+world remains visible during the short outage; the first full snapshot after
+reconnect reconciles all old IDs.
+
 ## Local prediction and reconciliation
 
 Immediately after sending a valid input, the client stores it in `pendingInputs` and applies it to the local player's target position when the player is alive.
@@ -198,7 +212,8 @@ its range.
 ## HUD
 
 `index.html` provides an accessible fixed overlay with HP, coin count, selected
-weapon and its Space control, and elapsed seconds out of 60.
+weapon and its Space control, elapsed seconds out of 60, connection status, and
+round-trip latency. Status changes are exposed as an ARIA live region.
 
 The client updates it from the local authoritative player and snapshot clock.
 There is currently no loading, connection, victory, defeat, or reconnect UI.
@@ -207,7 +222,8 @@ There is currently no loading, connection, victory, defeat, or reconnect UI.
 
 - WebSocket address is derived from the page protocol/hostname but always uses port 8080.
 - `wss:` pages require a TLS-capable proxy because the Node server itself is plain WebSocket.
-- No socket open/error/close UI or reconnect strategy.
+- Reconnect uses a fixed one-second retry rather than exponential backoff.
+- Reconnect creates a new player and does not resume identity or gameplay state.
 - Local and remote player models have the same appearance.
 - `Attack` and `Hit` animation clips are not driven because the protocol has no matching events.
 - The muzzle flash starts at the bullet coordinate, not a weapon bone/socket.

@@ -48,6 +48,9 @@ On connection:
 5. Send a full state snapshot to the new socket.
 
 On close, remove the player and broadcast the new state if other players remain.
+Browser reconnection is a fresh connection and therefore receives a new UUID;
+the server does not preserve the disconnected player's HP, coins, weapon, or
+position.
 
 ## Input validation and queueing
 
@@ -63,6 +66,9 @@ A `{ type: "weapon", weapon }` message is handled separately. The server accepts
 only own-property IDs in `WEAPONS`; an unknown ID leaves the authoritative
 selection unchanged. Switching weapons does not reset `nextShotAt`, preventing
 clients from bypassing the current fire cooldown.
+
+A `{ type: "ping", sentAt }` message with a finite numeric timestamp receives a
+same-socket `pong` echo. It does not enter the input queue or mutate the player.
 
 Unknown, malformed, stale, or spoofed messages are ignored without mutating the world.
 
