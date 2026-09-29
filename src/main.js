@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { clone } from "three/addons/utils/SkeletonUtils.js";
 import { syncInstanceStore } from "./instance-store.js";
+import { selectNearestIds } from "./performance.js";
 
 const hpElement = document.querySelector("#hp");
 const coinCountElement = document.querySelector("#coin-count");
@@ -25,6 +26,8 @@ const RECONNECT_MS = 1000;
 const INPUT_DISTANCE = PLAYER_SPEED * (INPUT_MS / 1000);
 const CAMERA_FOLLOW_SPEED = 8;
 const BASE_CAMERA_FOV = 75;
+const MAX_ANIMATED_ENEMIES = 24;
+const ENEMY_LOD_UPDATE_MS = 1000;
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcfe8f3);
@@ -244,6 +247,7 @@ scene.add(particles);
 
 const hitColor = new THREE.Color(0xff6633);
 let nextParticle = 0;
+let particleColorsDirty = false;
 
 const [
   { scene: playerModel, animations: playerAnimations },
@@ -272,6 +276,51 @@ enemyModel.traverse((object) => {
   object.castShadow = true;
   object.receiveShadow = true;
 });
+
+function createEnemyProxyMeshes(template) {
+  const meshes = [];
+  const skinnedPosition = new THREE.Vector3();
+  template.updateMatrixWorld(true);
+
+  template.traverse((object) => {
+    if (!object.isSkinnedMesh) return;
+    object.skeleton.update();
+
+    const geometry = object.geometry.clone();
+    const sourcePositions = geometry.getAttribute("position");
+    const positions = new Float32Array(sourcePositions.count * 3);
+
+    for (let index = 0; index < sourcePositions.count; index += 1) {
+      skinnedPosition.fromBufferAttribute(sourcePositions, index);
+      object.applyBoneTransform(index, skinnedPosition);
+      skinnedPosition.applyMatrix4(object.matrixWorld);
+      skinnedPosition.toArray(positions, index * 3);
+    }
+
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.deleteAttribute("skinIndex");
+    geometry.deleteAttribute("skinWeight");
+    geometry.computeVertexNormals();
+    geometry.computeBoundingSphere();
+
+    const mesh = createInstancedMesh(geometry, object.material);
+    mesh.receiveShadow = true;
+    meshes.push(mesh);
+  });
+
+  if (meshes.length === 0) {
+    throw new Error("Enemy model does not contain a skinned mesh for LOD");
+  }
+  return meshes;
+}
+
+const enemyProxyMeshes = createEnemyProxyMeshes(enemyModel);
+const enemyProxyMatrices = new Float32Array(MAX_INSTANCES * 16);
+const enemyProxyMatrix = new THREE.Matrix4();
+const enemyProxyPosition = new THREE.Vector3();
+const enemyProxyQuaternion = new THREE.Quaternion();
+const enemyProxyScale = new THREE.Vector3(1, 1, 1);
+const enemyProxyUp = new THREE.Vector3(0, 1, 0);
 
 const playerClips = {
   idle: THREE.AnimationClip.findByName(playerAnimations, "Idle"),
@@ -307,6 +356,8 @@ let combatEventsReady = false;
 let combo = 0;
 let lastKillAt = -Infinity;
 let comboTimer;
+let animatedEnemyIds = new Set();
+let nextEnemyLodAt = 0;
 
 const sounds = Object.fromEntries(
   Object.entries({
@@ -375,6 +426,32 @@ function createEnemyModel(item) {
   return model;
 }
 
+function disposeEnemyModel(model) {
+  const { mixer } = model.userData.animation;
+  mixer.stopAllAction();
+  mixer.uncacheRoot(model);
+  const skeletons = new Set();
+  model.traverse((object) => {
+    if (object.isSkinnedMesh) skeletons.add(object.skeleton);
+  });
+  for (const skeleton of skeletons) skeleton.dispose();
+  scene.remove(model);
+}
+
+function attachEnemyModel(enemy) {
+  if (enemy.model) return;
+  const model = createEnemyModel(enemy);
+  model.position.copy(enemy.position);
+  enemy.model = model;
+  scene.add(model);
+}
+
+function detachEnemyModel(enemy) {
+  if (!enemy.model) return;
+  disposeEnemyModel(enemy.model);
+  enemy.model = undefined;
+}
+
 function setAnimation(model, state) {
   const animation = model.userData.animation;
   if (animation.state === state) return;
@@ -394,10 +471,8 @@ function removeEnemyAfterDeath(model) {
   const remove = ({ action }) => {
     if (action !== actions.death) return;
     mixer.removeEventListener("finished", remove);
-    mixer.stopAllAction();
-    mixer.uncacheRoot(model);
     dyingEnemies.delete(model);
-    scene.remove(model);
+    disposeEnemyModel(model);
   };
   mixer.addEventListener("finished", remove);
 }
@@ -417,6 +492,14 @@ function emitParticles(x, y, z, color, count, speed, lifetime = 0.35) {
     particleColors[offset + 1] = color.g;
     particleColors[offset + 2] = color.b;
   }
+  if (count > 0) particleColorsDirty = true;
+}
+
+function uploadAttributeRange(attribute, componentCount) {
+  if (componentCount <= 0) return;
+  attribute.clearUpdateRanges();
+  attribute.addUpdateRange(0, componentCount);
+  attribute.needsUpdate = true;
 }
 
 function updateParticles(delta) {
@@ -436,8 +519,17 @@ function updateParticles(delta) {
     particlePositions[offset + 2] += particleVelocities[offset + 2] * delta;
   }
 
-  particleGeometry.attributes.position.needsUpdate = true;
-  particleGeometry.attributes.color.needsUpdate = true;
+  uploadAttributeRange(
+    particleGeometry.attributes.position,
+    particlePositions.length,
+  );
+  if (particleColorsDirty) {
+    uploadAttributeRange(
+      particleGeometry.attributes.color,
+      particleColors.length,
+    );
+    particleColorsDirty = false;
+  }
 }
 
 function showCombatEvent(event) {
@@ -534,8 +626,76 @@ function syncInstances(items, instances, y, onCreate, onRemove, onUpdate) {
   );
 }
 
+function syncEnemies(items, focusX, focusZ) {
+  const currentIds = new Set(items.map(({ id }) => id));
+  let died = false;
+  let wasHit = false;
+
+  for (const [id, enemy] of enemies) {
+    if (currentIds.has(id)) continue;
+    died = true;
+    emitParticles(
+      enemy.position.x,
+      enemy.position.y + 0.8,
+      enemy.position.z,
+      hitColor,
+      18,
+      3,
+      0.55,
+    );
+    if (enemy.model) {
+      removeEnemyAfterDeath(enemy.model);
+      enemy.model = undefined;
+    }
+    enemies.delete(id);
+  }
+
+  for (const item of items) {
+    let enemy = enemies.get(item.id);
+    if (!enemy) {
+      const position = new THREE.Vector3(item.x, 0, item.z);
+      enemy = {
+        id: item.id,
+        hp: item.hp,
+        model: undefined,
+        phase: Math.random() * Math.PI * 2,
+        position,
+        targetPosition: position.clone(),
+      };
+      enemies.set(item.id, enemy);
+      continue;
+    }
+
+    enemy.targetPosition.set(item.x, 0, item.z);
+    if (item.hp < enemy.hp) wasHit = true;
+    enemy.hp = item.hp;
+  }
+
+  const now = performance.now();
+  if (now >= nextEnemyLodAt || animatedEnemyIds.size === 0) {
+    animatedEnemyIds = selectNearestIds(
+      items,
+      focusX,
+      focusZ,
+      MAX_ANIMATED_ENEMIES,
+    );
+    nextEnemyLodAt = now + ENEMY_LOD_UPDATE_MS;
+  } else {
+    animatedEnemyIds = new Set(
+      [...animatedEnemyIds].filter((id) => currentIds.has(id)),
+    );
+  }
+  for (const enemy of enemies.values()) {
+    if (animatedEnemyIds.has(enemy.id)) attachEnemyModel(enemy);
+    else detachEnemyModel(enemy);
+  }
+
+  return { died, wasHit };
+}
+
 function updateInstances(mesh, instances, interpolation) {
   let index = 0;
+  const updateColors = mesh.userData.colorsDirty === true;
 
   for (const instance of instances.values()) {
     instance.position.lerp(instance.targetPosition, interpolation);
@@ -545,48 +705,60 @@ function updateInstances(mesh, instances, interpolation) {
       instance.position.z,
     );
     mesh.setMatrixAt(index, instanceMatrix);
-    if (instance.color) mesh.setColorAt(index, instance.color);
+    if (updateColors && instance.color) mesh.setColorAt(index, instance.color);
     index += 1;
   }
 
   mesh.count = index;
-  mesh.instanceMatrix.needsUpdate = true;
-  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  uploadAttributeRange(mesh.instanceMatrix, index * 16);
+  if (updateColors && mesh.instanceColor) {
+    uploadAttributeRange(mesh.instanceColor, index * 3);
+    mesh.userData.colorsDirty = false;
+  }
+}
+
+function updateEnemyProxies(now) {
+  let count = 0;
+
+  for (const enemy of enemies.values()) {
+    if (enemy.model || count >= MAX_INSTANCES) continue;
+    const dx = enemy.targetPosition.x - enemy.position.x;
+    const dz = enemy.targetPosition.z - enemy.position.z;
+    const moving = dx * dx + dz * dz > 0.0001;
+    const bob = moving ? Math.sin(now * 0.008 + enemy.phase) * 0.035 : 0;
+    enemyProxyPosition.set(enemy.position.x, bob, enemy.position.z);
+    if (moving) enemy.heading = Math.atan2(dx, dz);
+    enemyProxyQuaternion.setFromAxisAngle(enemyProxyUp, enemy.heading ?? 0);
+    enemyProxyMatrix.compose(
+      enemyProxyPosition,
+      enemyProxyQuaternion,
+      enemyProxyScale,
+    );
+    enemyProxyMatrix.toArray(enemyProxyMatrices, count * 16);
+    count += 1;
+  }
+
+  const activeMatrices = enemyProxyMatrices.subarray(0, count * 16);
+  for (const mesh of enemyProxyMeshes) {
+    mesh.count = count;
+    mesh.instanceMatrix.array.set(activeMatrices);
+    uploadAttributeRange(mesh.instanceMatrix, count * 16);
+  }
 }
 
 function renderState(state) {
-  let enemyDied = false;
-  let enemyWasHit = false;
   let localShotWeapon;
 
   syncMeshes(state.players, playerMeshes, createPlayerModel, 0);
   for (const player of state.players) {
     playerMeshes.get(player.id).userData.dead = player.hp === 0;
   }
-  syncMeshes(
+  const authoritativePlayer = state.players.find(({ id }) => id === playerId);
+  const { died: enemyDied, wasHit: enemyWasHit } = syncEnemies(
     state.enemies,
-    enemies,
-    createEnemyModel,
-    0,
-    (enemy) => {
-      enemyDied = true;
-      emitParticles(
-        enemy.position.x,
-        enemy.position.y + 0.8,
-        enemy.position.z,
-        hitColor,
-        18,
-        3,
-        0.55,
-      );
-      removeEnemyAfterDeath(enemy);
-    },
+    authoritativePlayer?.x ?? 0,
+    authoritativePlayer?.z ?? 0,
   );
-  for (const item of state.enemies) {
-    const enemy = enemies.get(item.id);
-    if (item.hp < enemy.userData.hp) enemyWasHit = true;
-    enemy.userData.hp = item.hp;
-  }
   syncInstances(
     state.bullets,
     bullets,
@@ -608,6 +780,7 @@ function renderState(state) {
         1.5,
       ),
   );
+  bulletInstances.userData.colorsDirty = true;
   syncInstances(state.coins, coins, 0.08);
 
   if (enemyWasHit) {
@@ -623,7 +796,7 @@ function renderState(state) {
     cameraKick = Math.max(cameraKick, localShotWeapon === "shotgun" ? 1 : 0.5);
   }
 
-  const player = state.players.find(({ id }) => id === playerId);
+  const player = authoritativePlayer;
   if (!player) return;
 
   pendingInputs = pendingInputs.filter(
@@ -700,6 +873,8 @@ function connectSocket() {
   lastCombatEventId = 0;
   combatEventsReady = false;
   combo = 0;
+  animatedEnemyIds = new Set();
+  nextEnemyLodAt = 0;
   clearTimeout(comboTimer);
   comboElement.hidden = true;
   combatTextLayer.replaceChildren();
@@ -835,18 +1010,22 @@ function animate() {
   }
   for (const enemy of enemies.values()) {
     const moving =
-      enemy.position.distanceToSquared(enemy.userData.targetPosition) > 0.0001;
-    setAnimation(enemy, moving ? "walking" : "idle");
+      enemy.position.distanceToSquared(enemy.targetPosition) > 0.0001;
+    enemy.position.lerp(enemy.targetPosition, interpolation);
+    if (!enemy.model) continue;
+
+    enemy.model.position.copy(enemy.position);
+    setAnimation(enemy.model, moving ? "walking" : "idle");
     if (moving) {
-      enemy.lookAt(
-        enemy.userData.targetPosition.x,
-        enemy.position.y,
-        enemy.userData.targetPosition.z,
+      enemy.model.lookAt(
+        enemy.targetPosition.x,
+        enemy.model.position.y,
+        enemy.targetPosition.z,
       );
     }
-    enemy.position.lerp(enemy.userData.targetPosition, interpolation);
-    enemy.userData.animation.mixer.update(visualDelta);
+    enemy.model.userData.animation.mixer.update(visualDelta);
   }
+  updateEnemyProxies(performance.now());
   for (const enemy of dyingEnemies) {
     enemy.userData.animation.mixer.update(visualDelta);
   }

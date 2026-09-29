@@ -122,12 +122,20 @@ due after reset, the first active tick adds one scheduled enemy after that wave.
 
 `spawnEnemy()` chooses one of four map sides and a random offset on the other axis. Each enemy starts with 30 HP.
 
-`findNearest()` compares squared XZ distance and ignores targets whose HP is zero. Enemies use it to chase the nearest living player.
+`findNearest()` compares squared XZ distance and ignores targets whose HP is
+zero or below. Enemies use it to chase the nearest living player.
 
 When an enemy is at least one unit away, its seek vector points toward the
 player. `enemySeparation()` also accumulates a distance-weighted vector away
 from every enemy within 1.25 units. Exact coordinate overlaps are split in a
 stable direction based on entity ID.
+
+At the start of each enemy update, the server buckets enemies into a spatial
+grid whose cell size matches the 1.25-unit separation radius. Each enemy asks
+only the surrounding cells for separation candidates. Movement vectors are
+computed from that tick-start grid and then applied as a second phase, so loop
+order does not change the neighborhood being evaluated. A fresh grid after
+movement also limits each bullet's collision candidates to nearby cells.
 
 The server combines the two steering inputs and normalizes the result:
 
@@ -200,6 +208,8 @@ Numeric values are rounded to three decimal places during JSON serialization. Se
 - No respawn or round restart while a player remains connected.
 - Combat events cover bullet damage and kills only. Generic projectile despawn
   and enemy death particles still come from entity lifecycle.
-- Enemy separation is an O(n²) scan with no spatial partitioning.
+- Nearest-player and automatic aim selection still use linear scans; these are
+  small at the current player count, while enemy separation and bullet collision
+  use the spatial grid.
 - No obstacle avoidance or pathfinding; static visual props remain outside the
   authoritative play area.

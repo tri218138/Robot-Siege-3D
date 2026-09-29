@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
+import { buildSpatialGrid, querySpatialGrid } from "./src/performance.js";
 
 const TICK_MS = 50;
 const SNAPSHOT_MS = 100;
@@ -133,7 +134,7 @@ function findNearest(items, position) {
   let nearestDistance = Infinity;
 
   for (const item of items) {
-    if (item.hp === 0) continue;
+    if (item.hp <= 0) continue;
     const distance = (item.x - position.x) ** 2 + (item.z - position.z) ** 2;
 
     if (distance < nearestDistance) {
@@ -158,8 +159,6 @@ function spawnEnemy() {
   enemies.set(enemy.id, enemy);
 }
 
-// ponytail: O(n²) is fine for this short round; add a spatial grid if the
-// spawn ceiling grows enough to show up in profiling.
 export function enemySeparation(enemy, allEnemies) {
   let x = 0;
   let z = 0;
@@ -224,6 +223,12 @@ function updatePlayers() {
 }
 
 function updateEnemies(delta, now) {
+  const spatialGrid = buildSpatialGrid(
+    enemies.values(),
+    ENEMY_SEPARATION_RADIUS,
+  );
+  const movements = [];
+
   for (const enemy of enemies.values()) {
     const target = findNearest(players.values(), enemy);
     if (!target) continue;
@@ -244,28 +249,35 @@ function updateEnemies(delta, now) {
       moveZ = z / distance;
     }
 
-    const separation = enemySeparation(enemy, enemies.values());
+    const separation = enemySeparation(
+      enemy,
+      querySpatialGrid(spatialGrid, enemy, ENEMY_SEPARATION_RADIUS),
+    );
     moveX += separation.x * ENEMY_SEPARATION_WEIGHT;
     moveZ += separation.z * ENEMY_SEPARATION_WEIGHT;
     const moveLength = Math.hypot(moveX, moveZ);
 
     if (moveLength > 0) {
-      enemy.x = Math.max(
-        -MAP_LIMIT,
-        Math.min(
-          MAP_LIMIT,
-          enemy.x + (moveX / moveLength) * ENEMY_SPEED * delta,
-        ),
-      );
-      enemy.z = Math.max(
-        -MAP_LIMIT,
-        Math.min(
-          MAP_LIMIT,
-          enemy.z + (moveZ / moveLength) * ENEMY_SPEED * delta,
-        ),
-      );
+      movements.push({
+        enemy,
+        x: (moveX / moveLength) * ENEMY_SPEED * delta,
+        z: (moveZ / moveLength) * ENEMY_SPEED * delta,
+      });
     }
   }
+
+  for (const movement of movements) {
+    movement.enemy.x = Math.max(
+      -MAP_LIMIT,
+      Math.min(MAP_LIMIT, movement.enemy.x + movement.x),
+    );
+    movement.enemy.z = Math.max(
+      -MAP_LIMIT,
+      Math.min(MAP_LIMIT, movement.enemy.z + movement.z),
+    );
+  }
+
+  return buildSpatialGrid(enemies.values(), ENEMY_SEPARATION_RADIUS);
 }
 
 function shoot(now) {
@@ -296,14 +308,17 @@ function shoot(now) {
   }
 }
 
-function updateBullets(delta) {
+function updateBullets(delta, enemyGrid) {
   for (const bullet of bullets.values()) {
     const step = Math.min(bullet.projectileSpeed * delta, bullet.remainingRange);
     bullet.x += bullet.directionX * step;
     bullet.z += bullet.directionZ * step;
     bullet.remainingRange -= step;
 
-    const target = findNearest(enemies.values(), bullet);
+    const target = findNearest(
+      querySpatialGrid(enemyGrid, bullet, ENEMY_SEPARATION_RADIUS),
+      bullet,
+    );
     if (
       target &&
       (target.x - bullet.x) ** 2 + (target.z - bullet.z) ** 2 <= 0.6 ** 2
@@ -368,9 +383,9 @@ function tick() {
       spawnEnemy();
       nextEnemyAt = now + 2000;
     }
-    updateEnemies(delta, now);
+    const enemyGrid = updateEnemies(delta, now);
     shoot(now);
-    updateBullets(delta);
+    updateBullets(delta, enemyGrid);
     collectCoins();
   }
 

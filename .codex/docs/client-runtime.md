@@ -13,11 +13,13 @@
 5. Load `/models/player.glb` and `/models/enemy.glb` in parallel with the same
    `GLTFLoader` and `MeshoptDecoder`.
 6. Normalize the player to 1.8 world units and the enemy to 1.5 world units.
-7. Resolve the three required animation clips for each rig.
-8. Create client entity maps and runtime state.
-9. Open the WebSocket only after all required models are loaded, then maintain
+7. Bake the enemy's bind pose into non-skinned geometries and create one fixed
+   instanced buffer per source submesh for distant-enemy rendering.
+8. Resolve the three required animation clips for each rig.
+9. Create client entity maps and runtime state.
+10. Open the WebSocket only after all required models are loaded, then maintain
    its status, latency probe, and reconnect lifecycle.
-10. Start the `requestAnimationFrame` loop and resize handler.
+11. Start the `requestAnimationFrame` loop and resize handler.
 
 If a required model fails to load, module initialization currently rejects and
 the WebSocket/render loop does not start. There is no loading screen or fallback
@@ -49,12 +51,13 @@ The directional light uses a 1024×1024 shadow map. Its orthographic shadow
 camera spans `-13..13` horizontally and vertically, covering the 24×24
 environment, with near/far planes `0.5/30` and `normalBias = 0.02`.
 
-The floor receives shadows. Every mesh in the cloned GLB player model casts
-and receives shadows; enemies cast and receive them; coins cast them. Bullets
-and particles intentionally do not cast shadows. The enemy's eye glow comes
-from the GLB's emissive `Glow` material rather than a runtime post-processing
-pipeline. There is currently no HDRI, environment map, ambient occlusion,
-bloom, or color grading.
+The floor receives shadows. Every mesh in the cloned GLB player and animated
+enemy models casts and receives shadows. Distant enemy instances receive but
+do not cast shadows, avoiding another instanced draw for the shadow pass. Coins
+cast shadows; bullets and particles do not. The enemy's eye glow comes from the
+GLB's emissive `Glow` material rather than a runtime post-processing pipeline.
+There is currently no HDRI, environment map, ambient occlusion, bloom, or color
+grading.
 
 ## Static environment
 
@@ -87,31 +90,40 @@ The client keeps four stores keyed by authoritative ID:
 - `bullets`
 - `coins`
 
-Players and enemies remain separate `SkeletonUtils.clone()` GLB objects because
-each owns an independent skeleton and `AnimationMixer`. Both store
-`userData.targetPosition`; incoming snapshots update that target and the
-animation frame interpolates toward it.
+Players remain separate `SkeletonUtils.clone()` GLB objects because each owns
+an independent skeleton and `AnimationMixer`. Enemy store entries instead own
+their current/target positions independently of their visual representation.
+At most once per second, `selectNearestIds()` assigns animated rigs to the 24
+enemies nearest the authoritative local-player position; the rest use the
+baked-pose instance buffers. The slower rebalance avoids cloning churn near the
+cutoff. Promotion creates a rig at the interpolated position, while demotion
+stops/uncaches its mixer, disposes its skeleton texture, and removes the rig.
 
-Bullets and coins each use one shared `THREE.InstancedMesh`. Their stores hold
-current/target positions plus bullet color. Each render frame writes packed
-translation matrices into dynamic instance buffers; bullet colors use the
-single mesh's `instanceColor` buffer. Frustum culling is disabled for these
-moving batches so a stale aggregate bounding volume cannot hide them.
+Bullets and coins each use one shared `THREE.InstancedMesh`. Distant enemies
+use one `InstancedMesh` per original GLB submesh so the original materials are
+preserved at a fixed number of draw calls. Their stores hold current/target
+positions plus presentation metadata. Each render frame writes packed matrices
+into dynamic instance buffers; bullet colors use the single mesh's
+`instanceColor` buffer. Matrix uploads are restricted to the active packed
+range, and bullet colors upload only after snapshot reconciliation can change
+that packing. Frustum culling is disabled for these moving batches so a stale
+aggregate bounding volume cannot hide them.
 
-`syncMeshes()` reconciles player and enemy scene objects.
-`syncInstanceStore()` performs the equivalent lifecycle for the two instanced
-stores:
+`syncMeshes()` reconciles player scene objects, `syncEnemies()` reconciles the
+hybrid enemy entries and representations, and `syncInstanceStore()` handles the
+bullet and coin stores:
 
 1. Create objects for IDs not already present.
 2. Update target positions for existing IDs.
 3. Remove entries whose IDs are absent from the new snapshot.
 4. Optionally run an `onRemove` callback before removal for lifecycle VFX.
 
-Each bullet/coin instanced group has a fixed capacity of 512. This is above the
-current 60-second round's practical entity load and keeps GPU buffers stable.
-Entities over that ceiling remain authoritative on the server but are not
-rendered; increase or dynamically grow the capacity only when a larger room or
-longer round is introduced and profiled.
+Each bullet/coin group and each distant-enemy submesh buffer has a fixed
+capacity of 512. This is above the current 60-second round's practical entity
+load and keeps GPU buffers stable. Entities over the relevant ceiling remain
+authoritative on the server but are not rendered; increase or dynamically grow
+the capacity only when a larger room or longer round is introduced and
+profiled.
 
 ## Player model and animation
 
@@ -131,20 +143,25 @@ The mixer for every player advances by frame delta each render frame.
 
 ## Enemy model and animation
 
-`/models/enemy.glb` is the Meshopt-compressed KayKit Skeleton Minion recorded
-in `public/models/README.md`. `createEnemyModel()` clones its rig and creates
-independent actions for `Idle`, `Walking_D_Skeletons`, and
-`Death_C_Skeletons`. New enemies begin on a randomized walking phase so a crowd
-does not move in lockstep. They switch to idle when interpolation stops and
-turn toward their latest target while moving.
+`/models/enemy.glb` is the Meshopt-compressed KayKit Skeleton Minion recorded in
+`public/models/README.md`. The nearest 24 enemies use `createEnemyModel()` to
+clone the rig and create independent actions for `Idle`,
+`Walking_D_Skeletons`, and `Death_C_Skeletons`. New animated enemies begin on a
+randomized walking phase so a crowd does not move in lockstep. They switch to
+idle when interpolation stops and turn toward their latest target while moving.
 
-Missing enemy IDs still mean death under the current lifecycle contract. The
-client removes the model from the live `enemies` map but retains it in
+During boot, `createEnemyProxyMeshes()` applies the bind-pose bone transform to
+each skinned vertex, bakes the normalized world transform into float positions,
+removes skin attributes, and creates instanced meshes with the source
+materials. Distant enemies use these static poses with interpolated position,
+heading, and a small procedural walking bob. They do not run mixers.
+
+Missing enemy IDs still mean death under the current lifecycle contract. If a
+removed enemy currently has an animated rig, the client retains that rig in
 `dyingEnemies` until the loop-once death action finishes, then uncaches its
-mixer and removes it from the scene. The orange death burst and audio occur at
-the same lifecycle transition. Enemy rigs are intentionally not instanced;
-profile or introduce GPU-instanced skeletal animation before substantially
-raising the current round's enemy population.
+mixer and removes it from the scene. A removed distant instance disappears
+without allocating a temporary death rig. The orange death burst and audio
+occur for both representations.
 
 ## Keyboard input
 
@@ -223,7 +240,9 @@ The client owns one `THREE.Points` object backed by fixed typed arrays for 512 p
 
 `nextParticle % MAX_PARTICLES` makes the buffer circular. New effects overwrite the oldest slots when the pool is full. Expired particles are moved to `y = -100` and later reused.
 
-`updateParticles()` applies gravity and `position += velocity * delta`, then marks GPU buffer attributes for upload.
+`updateParticles()` applies gravity and `position += velocity * delta`, then
+uploads positions. The color buffer is uploaded only after an emission changes
+one or more slots.
 
 Bullet material and particle color depend on its public `weapon` field: yellow
 for pistol, orange for shotgun, and cyan for machine gun. Its public `ownerId`

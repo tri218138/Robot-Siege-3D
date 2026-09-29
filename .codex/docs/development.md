@@ -115,6 +115,9 @@ pure separation steering helper, and connects two clients. It verifies:
 `test/instance-store.test.js` verifies that instanced entity entries are reused,
 missing IDs are removed, and the fixed capacity is respected.
 
+`test/performance.test.js` verifies stable count-bounded nearest-enemy selection
+for animated LOD and that spatial-grid queries exclude distant cells.
+
 It does not currently test the 60-second end state, damage cooldowns, bullet hits, coin collection, queue overflow, disconnect cleanup, rendering, animation, or particles.
 
 ## Change-impact guide
@@ -124,11 +127,11 @@ It does not currently test the 60-second end state, damage cooldowns, bullet hit
 | Movement speed or cadence | Update/check server and client constants, prediction, reconciliation, protocol docs, test. |
 | New server entity or field | Update serializer, client map/sync, protocol schema, authority test. |
 | New removal reason | Stop relying only on missing IDs; add explicit lifecycle semantics if VFX/gameplay needs the reason. |
-| Player/enemy model or clips | Check GLB path/license, bounds normalization, `SkeletonUtils.clone`, clip names, mixer cleanup, and browser rendering. |
+| Player/enemy model or clips | Check GLB path/license, bounds normalization, `SkeletonUtils.clone`, enemy proxy baking, clip names, mixer cleanup, and browser rendering. |
 | Environment source model | Run `npm run assets`, check provenance, then build and browser-render the optimized output. |
 | Animation state | Check per-player mixer ownership, transitions, server state/event source, browser behavior. |
 | Particle behavior | Preserve fixed-buffer reuse, dynamic buffer updates, lifecycle trigger correctness, browser behavior. |
-| Instanced entity behavior | Preserve the 512-entry ceiling, packed matrix/color updates, lifecycle VFX, and browser rendering. |
+| Instanced entity behavior | Preserve the 512-entry ceiling, 24-rig enemy LOD budget, packed matrix/color updates, lifecycle VFX, and browser rendering. |
 | WebSocket address/deployment | Reconcile bind host, browser URL, TLS proxy, and documentation. |
 
 ## Repository hygiene

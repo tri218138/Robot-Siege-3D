@@ -59,9 +59,11 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 | `server.js` | WebSocket server, authoritative state, game loop, validation, combat, spawning, collection. |
 | `src/main.js` | Scene setup, asset loading, network client, input prediction, reconciliation, interpolation, animation, VFX, camera, audio, rendering. |
 | `src/instance-store.js` | Capacity-bounded lifecycle reconciliation for instanced dynamic entities. |
+| `src/performance.js` | Shared nearest-selection and spatial-grid helpers used by client render LOD and server simulation. |
 | `index.html` | Full-screen canvas host and DOM HUD. |
 | `test/multiplayer.test.js` | Server-authority, weapon steering/selection, movement acknowledgement, and shared-world integration test. |
 | `test/instance-store.test.js` | Instance-store reuse, removal, and capacity test. |
+| `test/performance.test.js` | Nearest-enemy LOD selection and spatial-grid query tests. |
 | `public/models/player.glb` | Rigged RobotExpressive player asset served by Vite at `/models/player.glb`. |
 | `public/models/enemy.glb` | Optimized rigged Skeleton Minion served by Vite at `/models/enemy.glb`. |
 | `public/models/README.md` | Player/enemy asset sources, licenses, and enemy build transformation. |
@@ -98,9 +100,9 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Presence in a full snapshot creates or updates the rendered entity.
 - Absence from a later snapshot removes it.
 - Bullet removal drives only a generic despawn VFX because it can mean a hit or
-  exhausted range. Enemy removal currently drives its death animation and
-  burst; add an explicit reason/event before introducing other enemy removal
-  causes.
+  exhausted range. Enemy removal currently drives a burst for every
+  representation and a death animation when the enemy had a live rig; add an
+  explicit reason/event before introducing other enemy removal causes.
 
 ### Snapshot ordering
 
@@ -115,14 +117,19 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Load each player/enemy GLB template once.
 - Clone every rendered rig with `SkeletonUtils.clone`, not `Object3D.clone`, so
   skeleton state is independent.
-- Each player and enemy owns a separate `AnimationMixer` and action state.
+- Each player and each of the nearest 24 enemies owns a separate
+  `AnimationMixer`; farther enemies use static baked-pose instances.
 
 ### Bounded runtime work
 
 - Server input queues are capped at four entries per player.
 - Snapshots are skipped for a client whose WebSocket buffered amount is at least 64 KiB.
 - Bullets and coins use fixed 512-entry instance buffers.
+- At most 24 live enemies own animated rigs. Remaining enemies are packed into
+  fixed 512-entry baked-pose instance buffers, one buffer per source submesh.
 - VFX reuse a fixed 512-particle buffer instead of allocating meshes continuously.
+- Enemy separation and local bullet-hit candidates come from a 1.25-unit server
+  spatial grid rather than full enemy scans.
 - Snapshots retain only the latest 64 combat events; event IDs let clients
   ignore events they have already presented.
 
@@ -133,8 +140,9 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Full snapshots rather than delta compression.
 - Fixed ports in the browser/server development setup.
 - Reconnect creates a new player; there is no identity or state resume protocol.
-- No spatial partitioning, physics engine, or LOD.
-- Animated enemies use per-entity skeletons/mixers rather than GPU-instanced
-  skeletal animation; profile before increasing the fixed 60-second spawn load.
+- No physics engine, GPU-instanced skeletal animation, occlusion culling, or
+  adaptive render quality.
+- Enemy render LOD is count-based: the nearest 24 rigs animate and the rest use
+  static instanced poses. The transition does not blend between representations.
 
 These are deliberate prototype constraints. Upgrade them only when the requested feature or measured load requires it.
