@@ -42,7 +42,10 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 5. The client sends sequenced WASD intent at most once per 50 ms while keys are
    held, predicts that movement locally, and cycles weapon requests with Space.
 6. The server consumes at most one queued input per 50 ms tick, updates the world, and broadcasts full snapshots every 100 ms.
-7. The client ignores stale snapshots, removes acknowledged pending inputs, reapplies unacknowledged inputs, interpolates rendered entities, updates animation/VFX/camera/HUD, and renders each animation frame.
+7. The client ignores stale snapshots, removes acknowledged pending inputs,
+   reapplies unacknowledged inputs, consumes new combat events for local damage,
+   critical, and combo feedback, interpolates rendered entities, updates
+   animation/VFX/camera/HUD, and renders each animation frame.
 8. On disconnect, the server removes that player. The client clears pending
    prediction and retries after one second. Reconnection creates a new player;
    it joins the existing round when others remain, or starts a new round when
@@ -71,7 +74,8 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 - Never accept client-provided positions, HP, coin totals, entity state, or clock values.
 - Validate input messages before queueing them.
 - Accept only known weapon IDs; weapon damage, cadence, range, spread, and
-  projectiles remain server-owned.
+  projectiles remain server-owned. Critical-hit rolls and damage also remain
+  server-owned.
 - Apply movement, combat, spawning, damage, death, and collection on the server.
 
 ### Coupled movement constants
@@ -115,6 +119,8 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Snapshots are skipped for a client whose WebSocket buffered amount is at least 64 KiB.
 - Enemy, bullet, and coin rendering uses fixed 512-entry instance buffers.
 - VFX reuse a fixed 512-particle buffer instead of allocating meshes continuously.
+- Snapshots retain only the latest 64 combat events; event IDs let clients
+  ignore events they have already presented.
 
 ## Intentional ceilings
 

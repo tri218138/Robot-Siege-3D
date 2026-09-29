@@ -16,6 +16,9 @@
 | `ENEMY_SEPARATION_WEIGHT` | 1.5 | Relative strength of separation against player seeking. |
 | `MAP_LIMIT` | 9.5 | Clamp boundary on both X and Z. |
 | `GAME_DURATION_MS` | 60,000 ms | Round duration. |
+| `CRITICAL_CHANCE` | 15% | Chance for an authoritative bullet hit to be critical. |
+| `CRITICAL_MULTIPLIER` | 2× | Damage multiplier for a critical bullet hit. |
+| `MAX_COMBAT_EVENTS` | 64 | Recent damage events retained for client presentation. |
 
 ## In-memory state
 
@@ -28,7 +31,9 @@ Four maps store the world by stable entity ID:
   range.
 - `coins`: position; the coin ID reuses the defeated enemy ID.
 
-Round-level variables track start time, next spawn/snapshot time, entity numbering, snapshot sequence, and the previous tick time.
+Round-level variables track start time, next spawn/snapshot time, entity and
+combat-event numbering, snapshot sequence, the previous tick time, and a
+bounded recent-combat-event list.
 
 ## Round reset
 
@@ -157,8 +162,14 @@ from -12.5° through +12.5° around the aim direction.
 Projectiles travel in their initial direction rather than homing. Each tick
 decrements remaining range by the distance moved. A projectile is deleted when
 it comes within 0.6 units of the nearest enemy or exhausts its range. On a hit,
-the server applies the projectile's damage; zero enemy HP creates a coin and
-removes the enemy.
+the server rolls a 15% critical chance. Normal hits apply base weapon damage;
+critical hits apply twice that amount. Zero enemy HP creates a coin and removes
+the enemy.
+
+Every hit appends a presentation event with a monotonic ID, owner, amount,
+critical/kill flags, and world position. Only the latest 64 events are retained.
+These events report authoritative outcomes but do not drive simulation; clients
+use them for local floating damage text and kill combos.
 
 ## Coin collection
 
@@ -175,6 +186,9 @@ Collection increments the authoritative `player.coins`, deletes the coin, and st
 - Bullet direction, damage, speed, and remaining range are private; clients
   receive only ID, weapon, and position.
 - `lastProcessedInput` remains public because the client needs it for reconciliation.
+- `combatEvents` exposes recent resolved hits for presentation. Its history is
+  bounded and may be missed by a backpressured client, so gameplay must never
+  depend on consuming every event.
 
 Numeric values are rounded to three decimal places during JSON serialization. See [network-protocol.md](network-protocol.md) for exact schemas.
 
@@ -184,8 +198,8 @@ Numeric values are rounded to three decimal places during JSON serialization. Se
 - No maximum player count, authentication, names, teams, or ownership metadata.
 - No explicit win/lose message.
 - No respawn or round restart while a player remains connected.
-- No explicit combat event stream; clients infer generic projectile despawn and
-  enemy death effects from entity lifecycle.
+- Combat events cover bullet damage and kills only. Generic projectile despawn
+  and enemy death particles still come from entity lifecycle.
 - Enemy separation is an O(n²) scan with no spatial partitioning.
 - No obstacle avoidance or pathfinding; static visual props remain outside the
   authoritative play area.

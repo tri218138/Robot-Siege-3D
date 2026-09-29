@@ -80,6 +80,18 @@ and displays the round-trip time. The probe never mutates gameplay state.
   "type": "state",
   "sequence": 42,
   "elapsedSeconds": 12,
+  "combatEvents": [
+    {
+      "id": 9,
+      "type": "damage",
+      "ownerId": "uuid",
+      "amount": 20,
+      "critical": true,
+      "killed": false,
+      "x": 3.1,
+      "z": -1.4
+    }
+  ],
   "players": [
     {
       "id": "uuid",
@@ -122,6 +134,13 @@ All numeric values are rounded to three decimal places during serialization.
 `ownerId` identifies the authoritative player that fired a bullet. The client
 uses it to limit recoil and gunshot audio to the local player's shots.
 
+`combatEvents` is a bounded presentation history of the latest 64 resolved
+bullet hits. Event IDs are monotonic within a round. `ownerId` identifies the
+player whose projectile dealt the damage, `amount` is the authoritative damage
+after the critical multiplier, and `x`/`z` is the enemy position at impact.
+`critical` and `killed` describe that hit's outcome. Clients cursor by event ID
+and must not use this best-effort history to derive gameplay state.
+
 ## Snapshot sequence
 
 The server increments snapshot `sequence` every time `gameState()` is built. The counter resets with a new round.
@@ -158,6 +177,8 @@ The acknowledgement can advance when an input is simulated or deliberately dropp
 - Server normally broadcasts full snapshots every 100 ms.
 - A socket is skipped for that broadcast when `bufferedAmount >= 64 KiB`.
 - A later full snapshot restores current state, so skipped snapshots do not require retransmission.
+- A client can miss combat presentation events if more than 64 occur while it
+  is backpressured; this has no gameplay effect.
 
 ## Entity lifecycle semantics
 
@@ -183,4 +204,5 @@ When adding or changing a field:
 5. Update `test/multiplayer.test.js` for authority/shared-world behavior.
 6. Update this document and any affected client/server knowledge document.
 
-There is no protocol version negotiation, reconnect token, session resume, binary encoding, compression, or explicit event channel today.
+There is no protocol version negotiation, reconnect token, session resume,
+binary encoding, compression, or reliable event channel today.

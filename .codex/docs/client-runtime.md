@@ -212,9 +212,23 @@ lets the client recognize local shots. Current effects:
 - Removed bullet: five weapon-colored particles as a generic despawn effect.
 - Removed enemy: eighteen orange particles at its last visible position (death burst).
 
-Bullet/enemy removal is inferred from full snapshots, not an explicit event
-protocol. Bullet removal deliberately does not claim whether it hit or exhausted
-its range.
+Particle effects for bullet/enemy removal are inferred from full snapshots.
+Bullet removal deliberately does not claim whether it hit or exhausted its
+range; the damage event described below separately reports confirmed hits.
+
+## Combat feedback
+
+Snapshots include a bounded list of authoritative damage events. The client
+tracks the latest consumed event ID and presents only events owned by the local
+player. A normal hit creates a white floating damage number projected from the
+event's world position; a critical hit creates a larger yellow `CRIT!` label.
+
+A local killing hit advances a cosmetic combo when it occurs within three
+seconds of the preceding local kill. The combo hides and resets after three
+seconds without another kill. On the first snapshot of a connection the client
+advances its event cursor without presenting retained history, so reconnecting
+does not replay old combat feedback. Combat text and combo state are cleared on
+reconnect.
 
 ## Audio
 
@@ -232,12 +246,16 @@ There is no level-up cue because the game has no level system.
 
 ## HUD
 
-`index.html` provides an accessible fixed overlay with HP, coin count, selected
-weapon and its Space control, elapsed seconds out of 60, connection status, and
-round-trip latency. Status changes are exposed as an ARIA live region.
+`index.html` provides a responsive fixed overlay with HP and round progress
+bars, coin count, selected weapon and its Space key hint, remaining time,
+connection status, and round-trip latency. Low HP and weapon types receive
+distinct color treatments. The HP bar exposes native progressbar ARIA values;
+connection status remains an ARIA live region. Motion-heavy feedback respects
+the user's reduced-motion preference.
 
-The client updates it from the local authoritative player and snapshot clock.
-There is currently no loading, connection, victory, defeat, or reconnect UI.
+The client updates it from the local authoritative player, snapshot clock, and
+combat events. There is currently no loading, victory, defeat, or dedicated
+reconnect screen.
 
 ## Current limitations
 

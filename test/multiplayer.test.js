@@ -4,7 +4,7 @@ import test from "node:test";
 import { WebSocket } from "ws";
 
 process.env.PORT = "0";
-const { enemySeparation, server, WEAPONS, weaponDirections } =
+const { enemySeparation, rollDamage, server, WEAPONS, weaponDirections } =
   await import("../server.js");
 await once(server, "listening");
 
@@ -79,6 +79,11 @@ test("weapon configuration creates the five-pellet shotgun spread", () => {
         (12.5 * Math.PI) / 180,
     ) < 1e-12,
   );
+});
+
+test("damage rolls preserve normal damage and double critical damage", () => {
+  assert.deepEqual(rollDamage(10, 0.15), { amount: 10, critical: false });
+  assert.deepEqual(rollDamage(10, 0.149), { amount: 20, critical: true });
 });
 
 test("server owns movement and broadcasts one shared world", async () => {

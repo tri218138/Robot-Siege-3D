@@ -11,6 +11,9 @@ const ENEMY_SEPARATION_RADIUS = 1.25;
 const ENEMY_SEPARATION_WEIGHT = 1.5;
 const MAP_LIMIT = 9.5;
 const GAME_DURATION_MS = 60_000;
+const CRITICAL_CHANCE = 0.15;
+const CRITICAL_MULTIPLIER = 2;
+const MAX_COMBAT_EVENTS = 64;
 
 export const WEAPONS = Object.freeze({
   pistol: {
@@ -48,8 +51,10 @@ let startedAt;
 let nextEnemyAt;
 let nextSnapshotAt;
 let nextEntityId = 0;
+let nextCombatEventId = 0;
 let snapshotSequence = 0;
 let lastTick = Date.now();
+const combatEvents = [];
 
 export const server = new WebSocketServer({
   host: "127.0.0.1",
@@ -61,7 +66,9 @@ function resetGame() {
   bullets.clear();
   coins.clear();
   nextEntityId = 0;
+  nextCombatEventId = 0;
   snapshotSequence = 0;
+  combatEvents.length = 0;
   startedAt = Date.now();
   nextEnemyAt = startedAt;
   nextSnapshotAt = startedAt;
@@ -78,6 +85,7 @@ function gameState() {
     type: "state",
     sequence: ++snapshotSequence,
     elapsedSeconds,
+    combatEvents,
     players: [...players.values()].map(
       ({ inputQueue, lastReceivedInput, nextShotAt, ...player }) => player,
     ),
@@ -93,6 +101,14 @@ function gameState() {
       }) => bullet,
     ),
     coins: [...coins.values()],
+  };
+}
+
+export function rollDamage(baseDamage, roll = Math.random()) {
+  const critical = roll < CRITICAL_CHANCE;
+  return {
+    amount: baseDamage * (critical ? CRITICAL_MULTIPLIER : 1),
+    critical,
   };
 }
 
@@ -292,10 +308,24 @@ function updateBullets(delta) {
       target &&
       (target.x - bullet.x) ** 2 + (target.z - bullet.z) ** 2 <= 0.6 ** 2
     ) {
-      target.hp -= bullet.damage;
+      const { amount, critical } = rollDamage(bullet.damage);
+      target.hp -= amount;
       bullets.delete(bullet.id);
 
-      if (target.hp <= 0) {
+      const killed = target.hp <= 0;
+      combatEvents.push({
+        id: ++nextCombatEventId,
+        type: "damage",
+        ownerId: bullet.ownerId,
+        amount,
+        critical,
+        killed,
+        x: target.x,
+        z: target.z,
+      });
+      if (combatEvents.length > MAX_COMBAT_EVENTS) combatEvents.shift();
+
+      if (killed) {
         coins.set(target.id, { id: target.id, x: target.x, z: target.z });
         enemies.delete(target.id);
       }

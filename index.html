@@ -5,54 +5,357 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Robot sống sót</title>
     <style>
-      * {
-        box-sizing: border-box;
+      :root {
+        color-scheme: dark;
+        font-family: Inter, ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+        font-synthesis: none;
       }
+
+      * { box-sizing: border-box; }
 
       body {
         margin: 0;
         overflow: hidden;
-        font-family: system-ui, sans-serif;
+        color: #f8fafc;
+        background: #0f172a;
       }
 
-      canvas {
-        display: block;
-      }
+      canvas { display: block; }
 
       .hud {
         position: fixed;
-        z-index: 1;
-        top: 16px;
-        left: 16px;
-        display: grid;
-        gap: 8px;
-        padding: 12px 16px;
-        color: white;
-        background: rgb(15 23 42 / 80%);
-        border-radius: 10px;
+        z-index: 10;
+        inset: 0;
         pointer-events: none;
       }
 
-      #connection[data-state="online"] {
-        color: #86efac;
+      .hud__top {
+        position: absolute;
+        top: 20px;
+        left: 50%;
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
+        width: min(720px, calc(100vw - 32px));
+        align-items: start;
+        gap: 12px;
+        transform: translateX(-50%);
       }
 
-      #connection[data-state="connecting"] {
+      .panel {
+        border: 1px solid rgb(255 255 255 / 14%);
+        border-radius: 14px;
+        background: linear-gradient(145deg, rgb(15 23 42 / 88%), rgb(30 41 59 / 70%));
+        box-shadow: 0 10px 32px rgb(2 6 23 / 24%), inset 0 1px rgb(255 255 255 / 8%);
+        backdrop-filter: blur(12px);
+      }
+
+      .stat {
+        justify-self: start;
+        min-width: 112px;
+        padding: 10px 14px;
+      }
+
+      .stat__label,
+      .panel__label {
+        display: block;
+        margin-bottom: 2px;
+        color: #94a3b8;
+        font-size: 0.65rem;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .stat__value {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 1.2rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .round {
+        width: 210px;
+        padding: 9px 14px 11px;
+        text-align: center;
+      }
+
+      .round__time {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 1.55rem;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.05em;
+        line-height: 1;
+      }
+
+      .progress {
+        height: 6px;
+        overflow: hidden;
+        border-radius: 99px;
+        background: rgb(148 163 184 / 20%);
+      }
+
+      .progress::before {
+        display: block;
+        width: var(--progress, 100%);
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #22d3ee, #60a5fa);
+        box-shadow: 0 0 12px #22d3ee;
+        content: "";
+        transition: width 300ms ease;
+      }
+
+      .connection {
+        justify-self: end;
+        padding: 10px 13px;
+        color: #cbd5e1;
+        font-size: 0.75rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+
+      #connection::before {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        margin-right: 7px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 8px currentColor;
+        content: "";
+      }
+
+      #connection[data-state="online"] { color: #86efac; }
+      #connection[data-state="connecting"] { color: #fde68a; }
+
+      .health,
+      .weapon {
+        position: absolute;
+        bottom: 22px;
+        min-width: 220px;
+        padding: 12px 14px;
+      }
+
+      .health { left: 22px; }
+
+      .health__row,
+      .weapon__row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .health__value {
+        color: #f8fafc;
+        font-size: 1rem;
+        font-weight: 900;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .health .progress { margin-top: 8px; }
+
+      .health .progress::before {
+        background: linear-gradient(90deg, #22c55e, #a3e635);
+        box-shadow: 0 0 12px #22c55e;
+      }
+
+      .health[data-danger="true"] .health__value { color: #fca5a5; }
+
+      .health[data-danger="true"] .progress::before {
+        background: linear-gradient(90deg, #ef4444, #fb7185);
+        box-shadow: 0 0 12px #ef4444;
+      }
+
+      .weapon {
+        right: 22px;
+        min-width: 190px;
+      }
+
+      #weapon {
         color: #fde68a;
+        font-size: 1rem;
+        font-weight: 900;
+      }
+
+      .weapon[data-weapon="shotgun"] #weapon { color: #fb923c; }
+      .weapon[data-weapon="machineGun"] #weapon { color: #67e8f9; }
+
+      kbd {
+        padding: 3px 7px;
+        border: 1px solid rgb(255 255 255 / 20%);
+        border-bottom-width: 3px;
+        border-radius: 6px;
+        color: #cbd5e1;
+        background: rgb(15 23 42 / 65%);
+        font: 700 0.62rem/1 system-ui, sans-serif;
+        letter-spacing: 0.08em;
+      }
+
+      .combo {
+        position: absolute;
+        top: 24%;
+        left: 50%;
+        text-align: center;
+        filter: drop-shadow(0 4px 8px rgb(0 0 0 / 45%));
+        transform: translateX(-50%) rotate(-3deg);
+        animation: combo-pop 180ms ease-out;
+      }
+
+      .combo[hidden] { display: none; }
+
+      .combo span {
+        display: block;
+        color: #fef08a;
+        font-size: 0.7rem;
+        font-weight: 950;
+        letter-spacing: 0.28em;
+      }
+
+      .combo strong {
+        color: white;
+        font-size: clamp(2rem, 5vw, 3.4rem);
+        font-style: italic;
+        font-weight: 950;
+        line-height: 0.9;
+        -webkit-text-stroke: 1px rgb(15 23 42 / 55%);
+      }
+
+      .combat-text-layer {
+        position: fixed;
+        z-index: 20;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+
+      .damage-number {
+        position: absolute;
+        color: white;
+        font-size: 1.15rem;
+        font-weight: 950;
+        text-shadow: 0 2px 0 #7f1d1d, 0 4px 12px rgb(0 0 0 / 60%);
+        white-space: nowrap;
+        animation: damage-float 850ms ease-out forwards;
+      }
+
+      .damage-number--critical {
+        color: #fef08a;
+        font-size: 1.5rem;
+        font-style: italic;
+        text-shadow: 0 2px 0 #b45309, 0 0 12px #f59e0b, 0 4px 16px rgb(0 0 0 / 65%);
+      }
+
+      @keyframes damage-float {
+        0% { opacity: 0; transform: translate(-50%, 0) scale(0.65); }
+        18% { opacity: 1; transform: translate(-50%, -12px) scale(1.16); }
+        100% { opacity: 0; transform: translate(-50%, -72px) scale(0.92); }
+      }
+
+      @keyframes combo-pop {
+        from { transform: translateX(-50%) rotate(-3deg) scale(1.5); }
+      }
+
+      @media (max-width: 600px) {
+        .hud__top {
+          top: 12px;
+          grid-template-columns: auto 1fr;
+          width: calc(100vw - 24px);
+        }
+
+        .round {
+          grid-row: 2;
+          grid-column: 1 / -1;
+          width: 100%;
+        }
+
+        .connection { font-size: 0; }
+
+        #connection,
+        #latency { font-size: 0.72rem; }
+
+        .health,
+        .weapon {
+          bottom: 12px;
+          min-width: 0;
+        }
+
+        .health {
+          left: 12px;
+          width: calc(55vw - 18px);
+        }
+
+        .weapon {
+          right: 12px;
+          width: calc(45vw - 18px);
+        }
+
+        .health__row,
+        .weapon__row { gap: 8px; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .progress::before { transition: none; }
+
+        .damage-number,
+        .combo { animation-duration: 1ms; }
       }
     </style>
   </head>
   <body>
     <aside class="hud" aria-label="Trạng thái trò chơi">
-      <span>❤️ HP: <strong id="hp">100</strong></span>
-      <span>🪙 Coin: <strong id="coin-count">0</strong></span>
-      <span>🔫 Weapon: <strong id="weapon">Pistol</strong> (Space)</span>
-      <span>⏱ <strong id="timer">0</strong> / 60 sec</span>
-      <span>
-        🌐 <strong id="connection" data-state="connecting" role="status" aria-live="polite">Connecting…</strong>
-        · <strong id="latency">--</strong> ms
-      </span>
+      <div class="hud__top">
+        <div class="panel stat">
+          <span class="stat__label">Coins</span>
+          <strong class="stat__value">🪙 <span id="coin-count">0</span></strong>
+        </div>
+
+        <div class="panel round">
+          <span class="panel__label">Time remaining</span>
+          <strong class="round__time" id="timer">01:00</strong>
+          <div class="progress" id="round-progress" aria-hidden="true"></div>
+        </div>
+
+        <div class="panel connection">
+          <strong id="connection" data-state="connecting" role="status" aria-live="polite">Connecting…</strong>
+          · <span id="latency">--</span> ms
+        </div>
+      </div>
+
+      <div class="panel health" id="health" data-danger="false">
+        <div class="health__row">
+          <span class="panel__label">Integrity</span>
+          <strong class="health__value"><span id="hp">100</span> / 100</strong>
+        </div>
+        <div
+          class="progress"
+          id="hp-progress"
+          role="progressbar"
+          aria-label="Máu"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow="100"
+        ></div>
+      </div>
+
+      <div class="panel weapon" id="weapon-panel" data-weapon="pistol">
+        <span class="panel__label">Weapon</span>
+        <div class="weapon__row">
+          <strong id="weapon">Pistol</strong>
+          <kbd>SPACE</kbd>
+        </div>
+      </div>
+
+      <div class="combo" id="combo" hidden>
+        <span>COMBO</span>
+        <strong id="combo-count">×1</strong>
+      </div>
     </aside>
+
+    <div class="combat-text-layer" id="combat-text-layer" aria-hidden="true"></div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

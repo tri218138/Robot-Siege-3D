@@ -8,8 +8,15 @@ const hpElement = document.querySelector("#hp");
 const coinCountElement = document.querySelector("#coin-count");
 const timerElement = document.querySelector("#timer");
 const weaponElement = document.querySelector("#weapon");
+const weaponPanelElement = document.querySelector("#weapon-panel");
+const healthElement = document.querySelector("#health");
+const hpProgressElement = document.querySelector("#hp-progress");
+const roundProgressElement = document.querySelector("#round-progress");
 const connectionElement = document.querySelector("#connection");
 const latencyElement = document.querySelector("#latency");
+const comboElement = document.querySelector("#combo");
+const comboCountElement = document.querySelector("#combo-count");
+const combatTextLayer = document.querySelector("#combat-text-layer");
 const PLAYER_SPEED = 3;
 const MAP_LIMIT = 9.5;
 const INPUT_MS = 50;
@@ -279,6 +286,11 @@ let pendingInputs = [];
 let selectedWeapon = weaponCycle[0];
 let previousHp;
 let previousCoins;
+let lastCombatEventId = 0;
+let combatEventsReady = false;
+let combo = 0;
+let lastKillAt = -Infinity;
+let comboTimer;
 
 const sounds = Object.fromEntries(
   Object.entries({
@@ -374,6 +386,32 @@ function updateParticles(delta) {
 
   particleGeometry.attributes.position.needsUpdate = true;
   particleGeometry.attributes.color.needsUpdate = true;
+}
+
+function showCombatEvent(event) {
+  const screenPosition = new THREE.Vector3(event.x, 1.1, event.z).project(camera);
+  if (screenPosition.z > 1) return;
+
+  const label = document.createElement("span");
+  label.className = `damage-number${event.critical ? " damage-number--critical" : ""}`;
+  label.textContent = event.critical ? `CRIT! ${event.amount}` : `-${event.amount}`;
+  label.style.left = `${(screenPosition.x * 0.5 + 0.5) * 100}%`;
+  label.style.top = `${(-screenPosition.y * 0.5 + 0.5) * 100}%`;
+  label.style.marginLeft = `${Math.random() * 24 - 12}px`;
+  combatTextLayer.append(label);
+  label.addEventListener("animationend", () => label.remove(), { once: true });
+
+  if (!event.killed) return;
+  const now = performance.now();
+  combo = now - lastKillAt <= 3000 ? combo + 1 : 1;
+  lastKillAt = now;
+  comboCountElement.textContent = `×${combo}`;
+  comboElement.hidden = false;
+  clearTimeout(comboTimer);
+  comboTimer = setTimeout(() => {
+    combo = 0;
+    comboElement.hidden = true;
+  }, 3000);
 }
 
 function applyInput(position, input) {
@@ -542,8 +580,19 @@ function renderState(state) {
 
   hpElement.textContent = player.hp;
   coinCountElement.textContent = player.coins;
-  timerElement.textContent = state.elapsedSeconds;
+  const remainingSeconds = Math.max(0, 60 - state.elapsedSeconds);
+  const minutes = String(Math.floor(remainingSeconds / 60)).padStart(2, "0");
+  const seconds = String(remainingSeconds % 60).padStart(2, "0");
+  timerElement.textContent = `${minutes}:${seconds}`;
+  hpProgressElement.style.setProperty("--progress", `${player.hp}%`);
+  hpProgressElement.setAttribute("aria-valuenow", player.hp);
+  healthElement.dataset.danger = player.hp <= 25;
+  roundProgressElement.style.setProperty(
+    "--progress",
+    `${(remainingSeconds / 60) * 100}%`,
+  );
   weaponElement.textContent = weaponStyles[player.weapon]?.label ?? "Pistol";
+  weaponPanelElement.dataset.weapon = player.weapon;
   localPlayerAlive = player.hp > 0;
   if (previousHp !== undefined && player.hp < previousHp) {
     playSound("damage");
@@ -554,6 +603,18 @@ function renderState(state) {
   }
   previousHp = player.hp;
   previousCoins = player.coins;
+
+  const combatEvents = state.combatEvents ?? [];
+  if (!combatEventsReady) {
+    lastCombatEventId = combatEvents.at(-1)?.id ?? 0;
+    combatEventsReady = true;
+  } else {
+    for (const event of combatEvents) {
+      if (event.id <= lastCombatEventId) continue;
+      lastCombatEventId = event.id;
+      if (event.ownerId === playerId) showCombatEvent(event);
+    }
+  }
 }
 
 const keys = new Set();
@@ -579,6 +640,12 @@ function connectSocket() {
   localPlayerAlive = true;
   previousHp = undefined;
   previousCoins = undefined;
+  lastCombatEventId = 0;
+  combatEventsReady = false;
+  combo = 0;
+  clearTimeout(comboTimer);
+  comboElement.hidden = true;
+  combatTextLayer.replaceChildren();
   cameraReady = false;
   setConnectionStatus("Connecting…", "connecting");
   latencyElement.textContent = "--";
