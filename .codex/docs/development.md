@@ -14,14 +14,15 @@ npm install
 
 Runtime dependencies:
 
-- `three`: scene rendering, GLB loading, skeletal cloning/animation, and particles.
+- `three`: scene rendering, GLB loading, skeletal cloning/animation, and
+  particles.
 - `ws`: Node.js WebSocket server and integration-test clients.
 
 Development dependencies:
 
 - `vite`: browser development server and production build.
-- `@gltf-transform/cli`: validates, packs, and optimizes source models into
-  runtime GLBs.
+- `@gltf-transform/cli` and `@gltf-transform/core`: prune animations, validate,
+  pack, and optimize source models into runtime GLBs.
 
 ## Run locally
 
@@ -46,7 +47,7 @@ The browser client requires the WebSocket server for players and gameplay entiti
 
 | Command | Purpose |
 |---|---|
-| `npm run assets` | Rebuild and validate optimized environment GLBs. |
+| `npm run assets` | Rebuild and validate optimized environment/enemy GLBs. |
 | `npm run dev` | Start Vite development server with HMR. |
 | `npm run server` | Start the authoritative WebSocket simulation. |
 | `npm test` | Run Node's built-in test runner. |
@@ -61,9 +62,16 @@ Vite serves `public/` from the site root. Therefore:
 
 ```text
 public/models/player.glb -> /models/player.glb
+public/models/enemy.glb  -> /models/enemy.glb
 ```
 
 Keep model source/license information in `public/models/README.md`. The current RobotExpressive asset is rigged and contains the clips used by the client.
+
+The original KayKit Skeleton Minion lives in `assets/source/enemy/`.
+`npm run assets` keeps only the idle, skeleton-walk, and skeleton-death clips,
+reduces its gradient texture to 256², applies Meshopt compression, validates the
+result, and writes `public/models/enemy.glb`. The runtime file is about 207 KB;
+the source and pinned CC0 provenance remain available for rebuilding.
 
 Environment source downloads live in `assets/source/environment/`. The
 `npm run assets` command converts them into Meshopt-compressed GLBs in
@@ -116,7 +124,7 @@ It does not currently test the 60-second end state, damage cooldowns, bullet hit
 | Movement speed or cadence | Update/check server and client constants, prediction, reconciliation, protocol docs, test. |
 | New server entity or field | Update serializer, client map/sync, protocol schema, authority test. |
 | New removal reason | Stop relying only on missing IDs; add explicit lifecycle semantics if VFX/gameplay needs the reason. |
-| Player model or clips | Check GLB path/license, bounds normalization, `SkeletonUtils.clone`, clip names, browser rendering. |
+| Player/enemy model or clips | Check GLB path/license, bounds normalization, `SkeletonUtils.clone`, clip names, mixer cleanup, and browser rendering. |
 | Environment source model | Run `npm run assets`, check provenance, then build and browser-render the optimized output. |
 | Animation state | Check per-player mixer ownership, transitions, server state/event source, browser behavior. |
 | Particle behavior | Preserve fixed-buffer reuse, dynamic buffer updates, lifecycle trigger correctness, browser behavior. |

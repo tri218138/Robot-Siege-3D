@@ -8,17 +8,20 @@
 2. Create the Three.js scene, perspective camera, renderer, lighting, grass
    floor, and static environment.
 3. Load the four environment model files from `/models/environment/` in parallel.
-4. Clone and place the environment props, then create shared instanced enemy,
-   bullet, coin, and particle resources.
-5. Load `/models/player.glb` with the same `GLTFLoader`.
-6. Normalize the player model to 1.8 world units tall, center it on X/Z, and place its lowest bound at ground level.
-7. Find the `Idle`, `Running`, and `Death` animation clips.
+4. Clone and place the environment props, then create shared instanced bullet,
+   coin, and particle resources.
+5. Load `/models/player.glb` and `/models/enemy.glb` in parallel with the same
+   `GLTFLoader` and `MeshoptDecoder`.
+6. Normalize the player to 1.8 world units and the enemy to 1.5 world units.
+7. Resolve the three required animation clips for each rig.
 8. Create client entity maps and runtime state.
 9. Open the WebSocket only after all required models are loaded, then maintain
    its status, latency probe, and reconnect lifecycle.
 10. Start the `requestAnimationFrame` loop and resize handler.
 
-If the model fails to load, module initialization currently rejects and the WebSocket/render loop does not start. There is no loading screen or fallback model.
+If a required model fails to load, module initialization currently rejects and
+the WebSocket/render loop does not start. There is no loading screen or fallback
+model.
 
 ## Scene and camera
 
@@ -48,9 +51,10 @@ environment, with near/far planes `0.5/30` and `normalBias = 0.02`.
 
 The floor receives shadows. Every mesh in the cloned GLB player model casts
 and receives shadows; enemies cast and receive them; coins cast them. Bullets
-and particles intentionally do not cast shadows. There is currently no HDRI,
-environment map, custom tone mapping, ambient occlusion, bloom, or color
-grading.
+and particles intentionally do not cast shadows. The enemy's eye glow comes
+from the GLB's emissive `Glow` material rather than a runtime post-processing
+pipeline. There is currently no HDRI, environment map, ambient occlusion,
+bloom, or color grading.
 
 ## Static environment
 
@@ -83,30 +87,31 @@ The client keeps four stores keyed by authoritative ID:
 - `bullets`
 - `coins`
 
-Players remain separate cloned GLB objects because each owns an animation
-mixer and skeleton. Each player stores `userData.targetPosition`; incoming
-snapshots update that target and the animation frame interpolates toward it.
+Players and enemies remain separate `SkeletonUtils.clone()` GLB objects because
+each owns an independent skeleton and `AnimationMixer`. Both store
+`userData.targetPosition`; incoming snapshots update that target and the
+animation frame interpolates toward it.
 
-Enemies, bullets, and coins use three shared `THREE.InstancedMesh` objects
-instead of one scene object and draw call per entity. Their stores hold only
+Bullets and coins each use one shared `THREE.InstancedMesh`. Their stores hold
 current/target positions plus bullet color. Each render frame writes packed
 translation matrices into dynamic instance buffers; bullet colors use the
 single mesh's `instanceColor` buffer. Frustum culling is disabled for these
 moving batches so a stale aggregate bounding volume cannot hide them.
 
-`syncMeshes()` reconciles player scene objects. `syncInstanceStore()` performs
-the equivalent lifecycle for the three instanced stores:
+`syncMeshes()` reconciles player and enemy scene objects.
+`syncInstanceStore()` performs the equivalent lifecycle for the two instanced
+stores:
 
 1. Create objects for IDs not already present.
 2. Update target positions for existing IDs.
 3. Remove entries whose IDs are absent from the new snapshot.
 4. Optionally run an `onRemove` callback before removal for lifecycle VFX.
 
-Each instanced group has a fixed capacity of 512. This is above the current
-60-second round's practical entity load and keeps GPU buffers stable. Entities
-over that ceiling remain authoritative on the server but are not rendered;
-increase or dynamically grow the capacity only when a larger room or longer
-round is introduced and profiled.
+Each bullet/coin instanced group has a fixed capacity of 512. This is above the
+current 60-second round's practical entity load and keeps GPU buffers stable.
+Entities over that ceiling remain authoritative on the server but are not
+rendered; increase or dynamically grow the capacity only when a larger room or
+longer round is introduced and profiled.
 
 ## Player model and animation
 
@@ -123,6 +128,23 @@ HP === 0                                    -> Death
 Transitions use a 0.2-second fade. `Death` uses `LoopOnce` and holds its final pose. While an alive player is moving, the model turns toward `targetPosition`.
 
 The mixer for every player advances by frame delta each render frame.
+
+## Enemy model and animation
+
+`/models/enemy.glb` is the Meshopt-compressed KayKit Skeleton Minion recorded
+in `public/models/README.md`. `createEnemyModel()` clones its rig and creates
+independent actions for `Idle`, `Walking_D_Skeletons`, and
+`Death_C_Skeletons`. New enemies begin on a randomized walking phase so a crowd
+does not move in lockstep. They switch to idle when interpolation stops and
+turn toward their latest target while moving.
+
+Missing enemy IDs still mean death under the current lifecycle contract. The
+client removes the model from the live `enemies` map but retains it in
+`dyingEnemies` until the loop-once death action finishes, then uncaches its
+mixer and removes it from the scene. The orange death burst and audio occur at
+the same lifecycle transition. Enemy rigs are intentionally not instanced;
+profile or introduce GPU-instanced skeletal animation before substantially
+raising the current round's enemy population.
 
 ## Keyboard input
 
@@ -264,5 +286,6 @@ reconnect screen.
 - Reconnect uses a fixed one-second retry rather than exponential backoff.
 - Reconnect creates a new player and does not resume identity or gameplay state.
 - Local and remote player models have the same appearance.
-- `Attack` and `Hit` animation clips are not driven because the protocol has no matching events.
+- Player `Attack` and `Hit` clips and enemy hit/attack clips are not shipped or
+  driven because the protocol has no matching animation events.
 - The muzzle flash starts at the bullet coordinate, not a weapon bone/socket.

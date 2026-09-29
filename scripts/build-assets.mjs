@@ -3,10 +3,13 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { NodeIO } from "@gltf-transform/core";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const sourceDir = join(root, "assets/source/environment");
+const enemySource = join(root, "assets/source/enemy/Skeleton_Minion.glb");
 const outputDir = join(root, "public/models/environment");
+const enemyOutput = join(root, "public/models/enemy.glb");
 const cli = join(root, "node_modules/@gltf-transform/cli/bin/cli.js");
 const workDir = await mkdtemp(join(tmpdir(), "robot-three-assets-"));
 const assets = [
@@ -43,6 +46,74 @@ async function assertForestModels(path) {
   }
 }
 
+async function assertEnemy(path) {
+  const glb = await readFile(path);
+  const jsonLength = glb.readUInt32LE(12);
+  const json = JSON.parse(glb.subarray(20, 20 + jsonLength).toString());
+  const animations = json.animations.map(({ name }) => name).sort();
+  const expected = ["Death_C_Skeletons", "Idle", "Walking_D_Skeletons"];
+  if (animations.join() !== expected.join()) {
+    throw new Error(`Unexpected enemy animations: ${animations.join(", ")}`);
+  }
+  const eyes = json.nodes.find(({ name }) => name === "Skeleton_Minion_Eyes");
+  if (!eyes) {
+    throw new Error("Optimized enemy is missing Skeleton_Minion_Eyes");
+  }
+  const glowMaterial = json.materials.findIndex(
+    ({ name, emissiveFactor }) =>
+      name === "Glow" && emissiveFactor?.some((value) => value > 0),
+  );
+  if (glowMaterial === -1) {
+    throw new Error("Optimized enemy is missing its emissive Glow material");
+  }
+  if (
+    !json.meshes[eyes.mesh].primitives.some(
+      ({ material }) => material === glowMaterial,
+    )
+  ) {
+    throw new Error("Optimized enemy eyes do not use the Glow material");
+  }
+}
+
+async function buildEnemy() {
+  const document = await new NodeIO().read(enemySource);
+  const keepAnimations = new Set([
+    "Idle",
+    "Walking_D_Skeletons",
+    "Death_C_Skeletons",
+  ]);
+  for (const animation of document.getRoot().listAnimations()) {
+    if (!keepAnimations.has(animation.getName())) animation.dispose();
+  }
+
+  const prepared = join(workDir, "enemy-prepared.glb");
+  const output = join(workDir, "enemy.glb");
+  await new NodeIO().write(prepared, document);
+  run(
+    "optimize",
+    prepared,
+    output,
+    "--compress",
+    "meshopt",
+    "--texture-compress",
+    "webp",
+    "--texture-size",
+    "256",
+    "--flatten",
+    "false",
+    "--join",
+    "false",
+    "--instance",
+    "false",
+    "--palette",
+    "false",
+    "--simplify",
+    "false",
+  );
+  run("validate", output, "--ignore", "UNSUPPORTED_EXTENSION");
+  return output;
+}
+
 try {
   await mkdir(outputDir, { recursive: true });
   for (const [inputName, outputName] of assets) {
@@ -68,12 +139,16 @@ try {
     run("validate", output, "--ignore", "UNSUPPORTED_EXTENSION");
   }
 
+  const builtEnemy = await buildEnemy();
   await assertForestModels(join(workDir, "forest.glb"));
+  await assertEnemy(builtEnemy);
   for (const [, outputName] of assets) {
     const output = join(workDir, outputName);
     await copyFile(output, join(outputDir, outputName));
     console.log(`${outputName}: ${(await stat(output)).size} bytes`);
   }
+  await copyFile(builtEnemy, enemyOutput);
+  console.log(`enemy.glb: ${(await stat(builtEnemy)).size} bytes`);
 } finally {
   await rm(workDir, { recursive: true, force: true });
 }

@@ -37,7 +37,8 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 
 1. Start the WebSocket server on `127.0.0.1:8080`.
 2. Start Vite and load the browser client.
-3. The client creates the Three.js scene and loads `/models/player.glb` before opening its WebSocket.
+3. The client creates the Three.js scene and loads the player, enemy, and
+   environment GLBs before opening its WebSocket.
 4. The server accepts the connection, resets the round only when this is the first connected player, creates the authoritative player, sends `init`, and sends an initial `state` snapshot. The client also starts periodic application-level ping requests.
 5. The client sends sequenced WASD intent at most once per 50 ms while keys are
    held, predicts that movement locally, and cycles weapon requests with Space.
@@ -62,7 +63,8 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 | `test/multiplayer.test.js` | Server-authority, weapon steering/selection, movement acknowledgement, and shared-world integration test. |
 | `test/instance-store.test.js` | Instance-store reuse, removal, and capacity test. |
 | `public/models/player.glb` | Rigged RobotExpressive player asset served by Vite at `/models/player.glb`. |
-| `public/models/README.md` | Player asset source and license. |
+| `public/models/enemy.glb` | Optimized rigged Skeleton Minion served by Vite at `/models/enemy.glb`. |
+| `public/models/README.md` | Player/enemy asset sources, licenses, and enemy build transformation. |
 | `package.json` | Runtime dependencies and development commands. |
 | `PLAN.md` | Original learning roadmap; not runtime truth. |
 | `PLAN2.md` | Visual/gameplay expansion roadmap; not runtime truth. |
@@ -96,8 +98,9 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Presence in a full snapshot creates or updates the rendered entity.
 - Absence from a later snapshot removes it.
 - Bullet removal drives only a generic despawn VFX because it can mean a hit or
-  exhausted range. Enemy removal currently drives a death burst; add an
-  explicit reason/event before introducing other enemy removal causes.
+  exhausted range. Enemy removal currently drives its death animation and
+  burst; add an explicit reason/event before introducing other enemy removal
+  causes.
 
 ### Snapshot ordering
 
@@ -107,17 +110,18 @@ Changing one side without the other causes prediction drift and visible reconcil
   socket because reconnect creates a new player connection.
 - Player `lastProcessedInput` acknowledges client input and drives reconciliation.
 
-### Rigged player clones
+### Rigged character clones
 
-- Load the GLB once.
-- Clone each rendered player with `SkeletonUtils.clone`, not `Object3D.clone`, so skeleton state is independent.
-- Each player owns a separate `AnimationMixer` and action state.
+- Load each player/enemy GLB template once.
+- Clone every rendered rig with `SkeletonUtils.clone`, not `Object3D.clone`, so
+  skeleton state is independent.
+- Each player and enemy owns a separate `AnimationMixer` and action state.
 
 ### Bounded runtime work
 
 - Server input queues are capped at four entries per player.
 - Snapshots are skipped for a client whose WebSocket buffered amount is at least 64 KiB.
-- Enemy, bullet, and coin rendering uses fixed 512-entry instance buffers.
+- Bullets and coins use fixed 512-entry instance buffers.
 - VFX reuse a fixed 512-particle buffer instead of allocating meshes continuously.
 - Snapshots retain only the latest 64 combat events; event IDs let clients
   ignore events they have already presented.
@@ -130,5 +134,7 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Fixed ports in the browser/server development setup.
 - Reconnect creates a new player; there is no identity or state resume protocol.
 - No spatial partitioning, physics engine, or LOD.
+- Animated enemies use per-entity skeletons/mixers rather than GPU-instanced
+  skeletal animation; profile before increasing the fixed 60-second spawn load.
 
 These are deliberate prototype constraints. Upgrade them only when the requested feature or measured load requires it.
