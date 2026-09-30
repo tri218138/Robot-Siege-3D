@@ -80,6 +80,13 @@
         text-align: center;
       }
 
+      .round[data-kind="boss"] {
+        border-color: rgb(248 113 113 / 45%);
+        box-shadow:
+          0 10px 32px rgb(127 29 29 / 28%),
+          inset 0 1px rgb(255 255 255 / 8%);
+      }
+
       .round__time {
         display: block;
         margin-bottom: 7px;
@@ -106,6 +113,68 @@
         box-shadow: 0 0 12px #22d3ee;
         content: "";
         transition: width 300ms ease;
+      }
+
+      .round[data-kind="boss"] .progress::before,
+      .boss-health .progress::before {
+        background: linear-gradient(90deg, #dc2626, #fb7185);
+        box-shadow: 0 0 14px #ef4444;
+      }
+
+      .boss-health {
+        position: absolute;
+        top: 116px;
+        left: 50%;
+        width: min(560px, calc(100vw - 32px));
+        padding: 10px 16px 12px;
+        text-align: center;
+        transform: translateX(-50%);
+      }
+
+      .boss-health[hidden] { display: none; }
+
+      .boss-health__row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 7px;
+      }
+
+      .boss-health__name {
+        color: #fecaca;
+        font-size: 0.78rem;
+        font-weight: 950;
+        letter-spacing: 0.18em;
+      }
+
+      .boss-health__state {
+        color: #fda4af;
+        font-size: 0.7rem;
+        font-weight: 850;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .announcement {
+        position: absolute;
+        top: 37%;
+        left: 50%;
+        color: white;
+        font-size: clamp(2.4rem, 8vw, 5.5rem);
+        font-style: italic;
+        font-weight: 950;
+        letter-spacing: 0.12em;
+        text-align: center;
+        text-shadow: 0 3px 0 #7f1d1d, 0 0 28px rgb(248 113 113 / 75%);
+        transform: translate(-50%, -50%);
+        animation: announcement 1.5s ease-out forwards;
+      }
+
+      .announcement[hidden] { display: none; }
+
+      .announcement[data-result="true"] {
+        font-size: clamp(2.6rem, 9vw, 6rem);
+        animation: none;
       }
 
       .connection {
@@ -259,6 +328,12 @@
         from { transform: translateX(-50%) rotate(-3deg) scale(1.5); }
       }
 
+      @keyframes announcement {
+        0% { opacity: 0; transform: translate(-50%, -50%) scale(1.6); }
+        18%, 72% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+        100% { opacity: 0; transform: translate(-50%, -50%) scale(0.9); }
+      }
+
       @media (max-width: 600px) {
         .hud__top {
           top: 12px;
@@ -271,6 +346,8 @@
           grid-column: 1 / -1;
           width: 100%;
         }
+
+        .boss-health { top: 142px; }
 
         .connection { font-size: 0; }
 
@@ -301,6 +378,7 @@
         .progress::before { transition: none; }
 
         .damage-number,
+        .announcement,
         .combo { animation-duration: 1ms; }
       }
     </style>
@@ -313,8 +391,8 @@
           <strong class="stat__value">🪙 <span id="coin-count">0</span></strong>
         </div>
 
-        <div class="panel round">
-          <span class="panel__label">Time remaining</span>
+        <div class="panel round" id="round-panel" data-kind="normal">
+          <span class="panel__label" id="wave-label">Wave 1</span>
           <strong class="round__time" id="timer">01:00</strong>
           <div class="progress" id="round-progress" aria-hidden="true"></div>
         </div>
@@ -323,6 +401,22 @@
           <strong id="connection" data-state="connecting" role="status" aria-live="polite">Connecting…</strong>
           · <span id="latency">--</span> ms
         </div>
+      </div>
+
+      <div class="panel boss-health" id="boss-health" hidden>
+        <div class="boss-health__row">
+          <strong class="boss-health__name">TITAN OVERLORD</strong>
+          <span class="boss-health__state" id="boss-state">Idle</span>
+        </div>
+        <div
+          class="progress"
+          id="boss-progress"
+          role="progressbar"
+          aria-label="Boss health"
+          aria-valuemin="0"
+          aria-valuemax="3000"
+          aria-valuenow="3000"
+        ></div>
       </div>
 
       <div class="panel health" id="health" data-danger="false">
@@ -353,6 +447,14 @@
         <span>COMBO</span>
         <strong id="combo-count">×1</strong>
       </div>
+
+      <div
+        class="announcement"
+        id="announcement"
+        role="status"
+        aria-live="polite"
+        hidden
+      ></div>
     </aside>
 
     <div class="combat-text-layer" id="combat-text-layer" aria-hidden="true"></div>

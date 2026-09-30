@@ -73,6 +73,11 @@ reduces its gradient texture to 256², applies Meshopt compression, validates th
 result, and writes `public/models/enemy.glb`. The runtime file is about 207 KB;
 the source and pinned CC0 provenance remain available for rebuilding.
 
+The giant boss is not a second downloaded asset. The client clones this same
+enemy rig, scales it threefold, and creates per-clone red/emissive materials and
+an aura. Boss gameplay dimensions and state timing live in
+`src/game-rules.js`, not in the GLB.
+
 Environment source downloads live in `assets/source/environment/`. The
 `npm run assets` command converts them into Meshopt-compressed GLBs in
 `public/models/environment/`, embeds the house's external buffer and texture,
@@ -118,7 +123,13 @@ missing IDs are removed, and the fixed capacity is respected.
 `test/performance.test.js` verifies stable count-bounded nearest-enemy selection
 for animated LOD and that spatial-grid queries exclude distant cells.
 
-It does not currently test the 60-second end state, damage cooldowns, bullet hits, coin collection, queue overflow, disconnect cleanup, rendering, animation, or particles.
+`test/game-rules.test.js` verifies every timed wave boundary, the unlimited
+boss phase, the normal attack cycle, and the one-time half-HP enrage transition.
+
+It does not currently test timed wave transitions through a live WebSocket,
+boss area damage, victory rewards, damage cooldowns, bullet hits, coin
+collection, queue overflow, disconnect cleanup, rendering, animation, or
+particles.
 
 ## Change-impact guide
 
@@ -126,6 +137,7 @@ It does not currently test the 60-second end state, damage cooldowns, bullet hit
 |---|---|
 | Movement speed or cadence | Update/check server and client constants, prediction, reconciliation, protocol docs, test. |
 | New server entity or field | Update serializer, client map/sync, protocol schema, authority test. |
+| Wave or boss rule | Update `src/game-rules.js`, pure rule tests, server authority, HUD/schema docs, then browser-render the boss phase. |
 | New removal reason | Stop relying only on missing IDs; add explicit lifecycle semantics if VFX/gameplay needs the reason. |
 | Player/enemy model or clips | Check GLB path/license, bounds normalization, `SkeletonUtils.clone`, enemy proxy baking, clip names, mixer cleanup, and browser rendering. |
 | Environment source model | Run `npm run assets`, check provenance, then build and browser-render the optimized output. |

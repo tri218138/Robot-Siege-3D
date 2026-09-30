@@ -158,6 +158,15 @@ test("server owns movement and broadcasts one shared world", async () => {
     nextMessage(playerB, ({ type, enemies }) => type === "state" && enemies.length > 0),
   ]);
   assert.deepEqual(sharedStates[0].enemies, sharedStates[1].enemies);
+  assert.equal(sharedStates[0].status, "active");
+  assert.equal(sharedStates[0].wave.id, "wave-1");
+  assert.equal(sharedStates[0].wave.index, 1);
+  assert.equal(sharedStates[0].wave.total, 4);
+  assert.ok(
+    sharedStates[0].enemies.every(
+      ({ kind, hp, maxHp }) => kind === "normal" && hp <= maxHp,
+    ),
+  );
 
   playerA.close();
   playerB.close();

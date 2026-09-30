@@ -79,7 +79,18 @@ and displays the round-trip time. The probe never mutates gameplay state.
 {
   "type": "state",
   "sequence": 42,
-  "elapsedSeconds": 12,
+  "elapsedSeconds": 62,
+  "status": "active",
+  "wave": {
+    "id": "boss",
+    "index": 4,
+    "total": 4,
+    "label": "BOSS",
+    "kind": "boss",
+    "elapsedSeconds": 12,
+    "remainingSeconds": null,
+    "progress": 1
+  },
   "combatEvents": [
     {
       "id": 9,
@@ -106,9 +117,21 @@ and displays the round-trip time. The probe never mutates gameplay state.
   "enemies": [
     {
       "id": "enemy-7",
+      "kind": "normal",
       "x": 8.4,
       "z": 1.1,
-      "hp": 20
+      "hp": 20,
+      "maxHp": 30
+    },
+    {
+      "id": "boss-52",
+      "kind": "boss",
+      "x": 0.2,
+      "z": -5.6,
+      "hp": 2800,
+      "maxHp": 3000,
+      "bossState": "chase",
+      "enraged": false
     }
   ],
   "bullets": [
@@ -133,6 +156,18 @@ and displays the round-trip time. The probe never mutates gameplay state.
 All numeric values are rounded to three decimal places during serialization.
 `ownerId` identifies the authoritative player that fired a bullet. The client
 uses it to limit recoil and gunshot audio to the local player's shots.
+
+`status` is `active`, `victory`, or `defeat`. It is current state rather than a
+reliable event, so skipped snapshots recover it. `wave` is also authoritative:
+the first three phases provide a decreasing `remainingSeconds`, while the boss
+phase uses `null` and an elapsed-time-independent progress of `1`. `index` is
+one-based and `total` includes the boss phase. Total and wave elapsed values
+freeze with the first terminal snapshot.
+
+Every enemy exposes `kind`, `hp`, and `maxHp`. Bosses additionally expose
+`bossState` (`idle`, `chase`, `attack1`, `attack2`, `cooldown`, or `enrage`) and
+the persistent `enraged` modifier. Collision radii, speeds, state deadlines,
+attack timestamps, and one-shot damage guards remain server-private.
 
 `combatEvents` is a bounded presentation history of the latest 64 resolved
 bullet hits. Event IDs are monotonic within a round. `ownerId` identifies the
@@ -190,8 +225,9 @@ Snapshots are complete collections, not deltas:
 
 The current client uses a missing bullet ID for a generic weapon-colored despawn
 effect because removal may mean a hit or exhausted range. A missing enemy ID
-still drives the death burst. If future rules add other enemy removal causes,
-extend the protocol with explicit lifecycle reasons or events.
+still drives the death animation/burst, with a larger burst for a boss. If
+future rules add non-death enemy removal causes, extend the protocol with
+explicit lifecycle reasons or events.
 
 ## Protocol change checklist
 

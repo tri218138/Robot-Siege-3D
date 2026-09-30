@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
+import {
+  advanceBossState,
+  BOSS,
+  initializeBossState,
+  WAVES,
+  waveAtElapsed,
+} from "./src/game-rules.js";
 import { buildSpatialGrid, querySpatialGrid } from "./src/performance.js";
 
 const TICK_MS = 50;
@@ -11,7 +18,6 @@ const ENEMY_SPEED = 1.2;
 const ENEMY_SEPARATION_RADIUS = 1.25;
 const ENEMY_SEPARATION_WEIGHT = 1.5;
 const MAP_LIMIT = 9.5;
-const GAME_DURATION_MS = 60_000;
 const CRITICAL_CHANCE = 0.15;
 const CRITICAL_MULTIPLIER = 2;
 const MAX_COMBAT_EVENTS = 64;
@@ -51,6 +57,9 @@ const coins = new Map();
 let startedAt;
 let nextEnemyAt;
 let nextSnapshotAt;
+let currentWaveIndex;
+let gameStatus;
+let finishedAt;
 let nextEntityId = 0;
 let nextCombatEventId = 0;
 let snapshotSequence = 0;
@@ -71,26 +80,60 @@ function resetGame() {
   snapshotSequence = 0;
   combatEvents.length = 0;
   startedAt = Date.now();
-  nextEnemyAt = startedAt;
+  currentWaveIndex = -1;
+  gameStatus = "active";
+  finishedAt = undefined;
+  nextEnemyAt = Infinity;
   nextSnapshotAt = startedAt;
   lastTick = startedAt;
+  enterWave(0, startedAt);
 }
 
-function gameState() {
-  const elapsedSeconds = Math.min(
-    Math.floor((Date.now() - startedAt) / 1000),
-    GAME_DURATION_MS / 1000,
+function publicWaveState(now) {
+  const timelineNow = gameStatus === "active" ? now : (finishedAt ?? now);
+  const { index, wave, elapsedInWave, remainingMs } = waveAtElapsed(
+    timelineNow - startedAt,
   );
+  const duration = wave.durationMs;
+
+  return {
+    id: wave.id,
+    index: index + 1,
+    total: WAVES.length,
+    label: wave.label,
+    kind: wave.kind,
+    elapsedSeconds: Math.floor(elapsedInWave / 1000),
+    remainingSeconds:
+      remainingMs === null ? null : Math.ceil(remainingMs / 1000),
+    progress: duration === null ? 1 : 1 - remainingMs / duration,
+  };
+}
+
+function gameState(now = Date.now()) {
+  const timelineNow = gameStatus === "active" ? now : (finishedAt ?? now);
+  const elapsedSeconds = Math.floor((timelineNow - startedAt) / 1000);
 
   return {
     type: "state",
     sequence: ++snapshotSequence,
     elapsedSeconds,
+    status: gameStatus,
+    wave: publicWaveState(now),
     combatEvents,
     players: [...players.values()].map(
       ({ inputQueue, lastReceivedInput, nextShotAt, ...player }) => player,
     ),
-    enemies: [...enemies.values()].map(({ nextDamageAt, ...enemy }) => enemy),
+    enemies: [...enemies.values()].map(
+      ({
+        nextDamageAt,
+        stateUntil,
+        attackAt,
+        attackApplied,
+        collisionRadius,
+        speed,
+        ...enemy
+      }) => enemy,
+    ),
     bullets: [...bullets.values()].map(
       ({
         damage,
@@ -151,12 +194,61 @@ function spawnEnemy() {
   const offset = Math.random() * MAP_LIMIT * 2 - MAP_LIMIT;
   const enemy = {
     id: `enemy-${++nextEntityId}`,
+    kind: "normal",
     x: side < 2 ? (side === 0 ? -MAP_LIMIT : MAP_LIMIT) : offset,
     z: side >= 2 ? (side === 2 ? -MAP_LIMIT : MAP_LIMIT) : offset,
     hp: 30,
+    maxHp: 30,
+    speed: ENEMY_SPEED,
+    collisionRadius: 0.6,
     nextDamageAt: 0,
   };
   enemies.set(enemy.id, enemy);
+}
+
+function spawnBoss(now) {
+  const boss = initializeBossState(
+    {
+      id: `boss-${++nextEntityId}`,
+      kind: "boss",
+      x: 0,
+      z: -MAP_LIMIT,
+      hp: BOSS.hp,
+      maxHp: BOSS.hp,
+      speed: BOSS.speed,
+      collisionRadius: BOSS.collisionRadius,
+      nextDamageAt: 0,
+    },
+    now,
+  );
+  enemies.set(boss.id, boss);
+}
+
+function enterWave(index, now) {
+  currentWaveIndex = index;
+  const wave = WAVES[index];
+
+  if (wave.kind === "boss") {
+    if (![...enemies.values()].some(({ kind }) => kind === "boss")) {
+      spawnBoss(now);
+    }
+    nextEnemyAt = Infinity;
+    return;
+  }
+
+  for (let count = 0; count < wave.openingCount; count += 1) spawnEnemy();
+  nextEnemyAt = now + wave.spawnIntervalMs;
+}
+
+function updateWave(now) {
+  const { index } = waveAtElapsed(now - startedAt);
+  if (index !== currentWaveIndex) enterWave(index, now);
+
+  const wave = WAVES[currentWaveIndex];
+  if (wave.kind === "normal" && now >= nextEnemyAt) {
+    spawnEnemy();
+    nextEnemyAt = now + wave.spawnIntervalMs;
+  }
 }
 
 export function enemySeparation(enemy, allEnemies) {
@@ -222,6 +314,47 @@ function updatePlayers() {
   }
 }
 
+function applyBossAttack(boss, now) {
+  if (
+    boss.attackApplied ||
+    now < boss.attackAt ||
+    (boss.bossState !== "attack1" && boss.bossState !== "attack2")
+  ) {
+    return;
+  }
+
+  const attack =
+    boss.bossState === "attack1"
+      ? { radius: BOSS.attack1Radius, damage: BOSS.attack1Damage }
+      : { radius: BOSS.attack2Radius, damage: BOSS.attack2Damage };
+  const damage = Math.round(
+    attack.damage * (boss.enraged ? BOSS.enragedDamageMultiplier : 1),
+  );
+
+  for (const player of players.values()) {
+    if (player.hp <= 0) continue;
+    const distance = Math.hypot(player.x - boss.x, player.z - boss.z);
+    if (distance <= attack.radius) player.hp = Math.max(0, player.hp - damage);
+  }
+  boss.attackApplied = true;
+}
+
+function updateBoss(boss, target, delta, now) {
+  const x = target.x - boss.x;
+  const z = target.z - boss.z;
+  const distance = Math.hypot(x, z);
+  advanceBossState(boss, now, distance);
+  applyBossAttack(boss, now);
+
+  if (boss.bossState !== "chase" || distance === 0) return undefined;
+  boss.speed = boss.enraged ? BOSS.enragedSpeed : BOSS.speed;
+  return {
+    enemy: boss,
+    x: (x / distance) * boss.speed * delta,
+    z: (z / distance) * boss.speed * delta,
+  };
+}
+
 function updateEnemies(delta, now) {
   const spatialGrid = buildSpatialGrid(
     enemies.values(),
@@ -232,6 +365,12 @@ function updateEnemies(delta, now) {
   for (const enemy of enemies.values()) {
     const target = findNearest(players.values(), enemy);
     if (!target) continue;
+
+    if (enemy.kind === "boss") {
+      const movement = updateBoss(enemy, target, delta, now);
+      if (movement) movements.push(movement);
+      continue;
+    }
 
     const x = target.x - enemy.x;
     const z = target.z - enemy.z;
@@ -260,8 +399,8 @@ function updateEnemies(delta, now) {
     if (moveLength > 0) {
       movements.push({
         enemy,
-        x: (moveX / moveLength) * ENEMY_SPEED * delta,
-        z: (moveZ / moveLength) * ENEMY_SPEED * delta,
+        x: (moveX / moveLength) * enemy.speed * delta,
+        z: (moveZ / moveLength) * enemy.speed * delta,
       });
     }
   }
@@ -308,21 +447,37 @@ function shoot(now) {
   }
 }
 
-function updateBullets(delta, enemyGrid) {
+function findBulletHit(items, bullet) {
+  let hit;
+  let nearestDistance = Infinity;
+
+  for (const enemy of items) {
+    if (enemy.hp <= 0) continue;
+    const distance =
+      (enemy.x - bullet.x) ** 2 + (enemy.z - bullet.z) ** 2;
+    if (
+      distance <= enemy.collisionRadius ** 2 &&
+      distance < nearestDistance
+    ) {
+      hit = enemy;
+      nearestDistance = distance;
+    }
+  }
+  return hit;
+}
+
+function updateBullets(delta, enemyGrid, now) {
   for (const bullet of bullets.values()) {
     const step = Math.min(bullet.projectileSpeed * delta, bullet.remainingRange);
     bullet.x += bullet.directionX * step;
     bullet.z += bullet.directionZ * step;
     bullet.remainingRange -= step;
 
-    const target = findNearest(
-      querySpatialGrid(enemyGrid, bullet, ENEMY_SEPARATION_RADIUS),
+    const target = findBulletHit(
+      querySpatialGrid(enemyGrid, bullet, BOSS.collisionRadius),
       bullet,
     );
-    if (
-      target &&
-      (target.x - bullet.x) ** 2 + (target.z - bullet.z) ** 2 <= 0.6 ** 2
-    ) {
+    if (target) {
       const { amount, critical } = rollDamage(bullet.damage);
       target.hp -= amount;
       bullets.delete(bullet.id);
@@ -341,8 +496,15 @@ function updateBullets(delta, enemyGrid) {
       if (combatEvents.length > MAX_COMBAT_EVENTS) combatEvents.shift();
 
       if (killed) {
-        coins.set(target.id, { id: target.id, x: target.x, z: target.z });
         enemies.delete(target.id);
+        if (target.kind === "boss") {
+          const owner = players.get(bullet.ownerId);
+          if (owner) owner.coins += 25;
+          gameStatus = "victory";
+          finishedAt = now;
+        } else {
+          coins.set(target.id, { id: target.id, x: target.x, z: target.z });
+        }
       }
     } else if (bullet.remainingRange <= 0) {
       bullets.delete(bullet.id);
@@ -368,24 +530,21 @@ function tick() {
   lastTick = now;
   if (players.size === 0) return;
 
-  const gameRunning = now - startedAt < GAME_DURATION_MS;
   updatePlayers();
 
-  // Spawn 10 enemies at the beginning
-  if (enemies.size === 0) {
-    for (let i = 0; i < 10; i++) {
-      spawnEnemy();
+  if (gameStatus === "active") {
+    if (![...players.values()].some(({ hp }) => hp > 0)) {
+      gameStatus = "defeat";
+      finishedAt = now;
+    } else {
+      updateWave(now);
     }
   }
 
-  if (gameRunning) {
-    if (now >= nextEnemyAt) {
-      spawnEnemy();
-      nextEnemyAt = now + 2000;
-    }
+  if (gameStatus === "active") {
     const enemyGrid = updateEnemies(delta, now);
     shoot(now);
-    updateBullets(delta, enemyGrid);
+    updateBullets(delta, enemyGrid, now);
     collectCoins();
   }
 

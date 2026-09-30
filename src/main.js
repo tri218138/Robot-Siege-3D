@@ -13,6 +13,12 @@ const weaponPanelElement = document.querySelector("#weapon-panel");
 const healthElement = document.querySelector("#health");
 const hpProgressElement = document.querySelector("#hp-progress");
 const roundProgressElement = document.querySelector("#round-progress");
+const roundPanelElement = document.querySelector("#round-panel");
+const waveLabelElement = document.querySelector("#wave-label");
+const bossHealthElement = document.querySelector("#boss-health");
+const bossProgressElement = document.querySelector("#boss-progress");
+const bossStateElement = document.querySelector("#boss-state");
+const announcementElement = document.querySelector("#announcement");
 const connectionElement = document.querySelector("#connection");
 const latencyElement = document.querySelector("#latency");
 const comboElement = document.querySelector("#combo");
@@ -28,6 +34,7 @@ const CAMERA_FOLLOW_SPEED = 8;
 const BASE_CAMERA_FOV = 75;
 const MAX_ANIMATED_ENEMIES = 24;
 const ENEMY_LOD_UPDATE_MS = 1000;
+const bossColor = new THREE.Color(0x8f1515);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xcfe8f3);
@@ -194,8 +201,8 @@ const weaponCycle = ["pistol", "shotgun", "machineGun"];
 const coinGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.08, 16);
 const coinMaterial = new THREE.MeshStandardMaterial({ color: 0xffd700 });
 
-// ponytail: 512 exceeds the current 60-second round load; grow only after
-// profiling a larger room or longer round.
+// ponytail: 512 exceeds the current wave schedule's load; grow only after
+// profiling a larger room or longer survival mode.
 const MAX_INSTANCES = 512;
 function createInstancedMesh(geometry, material, castShadow = false) {
   const mesh = new THREE.InstancedMesh(geometry, material, MAX_INSTANCES);
@@ -358,6 +365,9 @@ let lastKillAt = -Infinity;
 let comboTimer;
 let animatedEnemyIds = new Set();
 let nextEnemyLodAt = 0;
+let previousWaveId;
+let previousGameStatus;
+let announcementTimer;
 
 const sounds = Object.fromEntries(
   Object.entries({
@@ -410,6 +420,47 @@ function createPlayerModel() {
 
 function createEnemyModel(item) {
   const model = clone(enemyModel);
+  const uniqueMaterials = [];
+
+  if (item.kind === "boss") {
+    model.scale.multiplyScalar(3);
+    model.traverse((object) => {
+      if (!object.isMesh) return;
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      const tintedMaterials = materials.map((source) => {
+        const material = source.clone();
+        material.color?.lerp(bossColor, 0.58);
+        if (material.emissive) {
+          material.emissive.set(0x5c0808);
+          material.emissiveIntensity = 0.8;
+        }
+        uniqueMaterials.push(material);
+        return material;
+      });
+      object.material = Array.isArray(object.material)
+        ? tintedMaterials
+        : tintedMaterials[0];
+    });
+
+    const aura = new THREE.Mesh(
+      new THREE.RingGeometry(0.72, 0.92, 48),
+      new THREE.MeshBasicMaterial({
+        color: 0xff3344,
+        transparent: true,
+        opacity: 0.5,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    aura.name = "boss-aura";
+    aura.rotation.x = -Math.PI / 2;
+    aura.position.y = 0.025;
+    model.add(aura);
+    uniqueMaterials.push(aura.material);
+  }
+
   const mixer = new THREE.AnimationMixer(model);
   const actions = Object.fromEntries(
     Object.entries(enemyClips).map(([state, clip]) => [
@@ -423,6 +474,9 @@ function createEnemyModel(item) {
   actions.walking.time = Math.random() * actions.walking.getClip().duration;
   model.userData.animation = { mixer, actions, state: "walking" };
   model.userData.hp = item.hp;
+  model.userData.kind = item.kind;
+  model.userData.baseScale = model.scale.clone();
+  model.userData.uniqueMaterials = uniqueMaterials;
   return model;
 }
 
@@ -435,6 +489,10 @@ function disposeEnemyModel(model) {
     if (object.isSkinnedMesh) skeletons.add(object.skeleton);
   });
   for (const skeleton of skeletons) skeleton.dispose();
+  for (const material of model.userData.uniqueMaterials ?? []) {
+    material.dispose();
+  }
+  model.getObjectByName("boss-aura")?.geometry.dispose();
   scene.remove(model);
 }
 
@@ -636,12 +694,12 @@ function syncEnemies(items, focusX, focusZ) {
     died = true;
     emitParticles(
       enemy.position.x,
-      enemy.position.y + 0.8,
+      enemy.position.y + (enemy.kind === "boss" ? 2.2 : 0.8),
       enemy.position.z,
-      hitColor,
-      18,
-      3,
-      0.55,
+      enemy.kind === "boss" ? bossColor : hitColor,
+      enemy.kind === "boss" ? 64 : 18,
+      enemy.kind === "boss" ? 6 : 3,
+      enemy.kind === "boss" ? 1.2 : 0.55,
     );
     if (enemy.model) {
       removeEnemyAfterDeath(enemy.model);
@@ -656,7 +714,11 @@ function syncEnemies(items, focusX, focusZ) {
       const position = new THREE.Vector3(item.x, 0, item.z);
       enemy = {
         id: item.id,
+        kind: item.kind ?? "normal",
         hp: item.hp,
+        maxHp: item.maxHp ?? item.hp,
+        bossState: item.bossState,
+        enraged: item.enraged ?? false,
         model: undefined,
         phase: Math.random() * Math.PI * 2,
         position,
@@ -669,16 +731,21 @@ function syncEnemies(items, focusX, focusZ) {
     enemy.targetPosition.set(item.x, 0, item.z);
     if (item.hp < enemy.hp) wasHit = true;
     enemy.hp = item.hp;
+    enemy.maxHp = item.maxHp ?? enemy.maxHp;
+    enemy.bossState = item.bossState;
+    enemy.enraged = item.enraged ?? false;
   }
 
   const now = performance.now();
   if (now >= nextEnemyLodAt || animatedEnemyIds.size === 0) {
+    const bosses = items.filter(({ kind }) => kind === "boss");
     animatedEnemyIds = selectNearestIds(
-      items,
+      items.filter(({ kind }) => kind !== "boss"),
       focusX,
       focusZ,
-      MAX_ANIMATED_ENEMIES,
+      Math.max(0, MAX_ANIMATED_ENEMIES - bosses.length),
     );
+    for (const boss of bosses) animatedEnemyIds.add(boss.id);
     nextEnemyLodAt = now + ENEMY_LOD_UPDATE_MS;
   } else {
     animatedEnemyIds = new Set(
@@ -686,8 +753,9 @@ function syncEnemies(items, focusX, focusZ) {
     );
   }
   for (const enemy of enemies.values()) {
-    if (animatedEnemyIds.has(enemy.id)) attachEnemyModel(enemy);
-    else detachEnemyModel(enemy);
+    if (enemy.kind === "boss" || animatedEnemyIds.has(enemy.id)) {
+      attachEnemyModel(enemy);
+    } else detachEnemyModel(enemy);
   }
 
   return { died, wasHit };
@@ -721,7 +789,7 @@ function updateEnemyProxies(now) {
   let count = 0;
 
   for (const enemy of enemies.values()) {
-    if (enemy.model || count >= MAX_INSTANCES) continue;
+    if (enemy.kind === "boss" || enemy.model || count >= MAX_INSTANCES) continue;
     const dx = enemy.targetPosition.x - enemy.position.x;
     const dz = enemy.targetPosition.z - enemy.position.z;
     const moving = dx * dx + dz * dz > 0.0001;
@@ -743,6 +811,66 @@ function updateEnemyProxies(now) {
     mesh.count = count;
     mesh.instanceMatrix.array.set(activeMatrices);
     uploadAttributeRange(mesh.instanceMatrix, count * 16);
+  }
+}
+
+function showAnnouncement(label, result = false) {
+  clearTimeout(announcementTimer);
+  announcementElement.textContent = label;
+  announcementElement.dataset.result = String(result);
+  announcementElement.hidden = false;
+  if (!result) {
+    announcementTimer = setTimeout(() => {
+      announcementElement.hidden = true;
+    }, 1500);
+  }
+}
+
+function updateWaveHud(state) {
+  const wave = state.wave;
+  if (!wave) return;
+
+  waveLabelElement.textContent = wave.label;
+  roundPanelElement.dataset.kind = wave.kind;
+  roundProgressElement.style.setProperty(
+    "--progress",
+    `${THREE.MathUtils.clamp(wave.progress, 0, 1) * 100}%`,
+  );
+  if (wave.remainingSeconds === null) {
+    timerElement.textContent = "BOSS";
+  } else {
+    const minutes = String(Math.floor(wave.remainingSeconds / 60)).padStart(
+      2,
+      "0",
+    );
+    const seconds = String(wave.remainingSeconds % 60).padStart(2, "0");
+    timerElement.textContent = `${minutes}:${seconds}`;
+  }
+
+  if (wave.id !== previousWaveId) {
+    previousWaveId = wave.id;
+    showAnnouncement(wave.label);
+    playSound("ui");
+  }
+
+  const boss = state.enemies.find(({ kind }) => kind === "boss");
+  bossHealthElement.hidden = !boss;
+  if (boss) {
+    const bossPercent = THREE.MathUtils.clamp(boss.hp / boss.maxHp, 0, 1);
+    bossProgressElement.style.setProperty(
+      "--progress",
+      `${bossPercent * 100}%`,
+    );
+    bossProgressElement.setAttribute("aria-valuemax", boss.maxHp);
+    bossProgressElement.setAttribute("aria-valuenow", boss.hp);
+    const stateLabel = boss.bossState.replace(/(\d)/, " $1");
+    bossStateElement.textContent = `${stateLabel}${boss.enraged ? " · ENRAGED" : ""}`;
+  }
+
+  if (state.status !== previousGameStatus) {
+    previousGameStatus = state.status;
+    if (state.status === "victory") showAnnouncement("VICTORY", true);
+    if (state.status === "defeat") showAnnouncement("DEFEAT", true);
   }
 }
 
@@ -782,6 +910,7 @@ function renderState(state) {
   );
   bulletInstances.userData.colorsDirty = true;
   syncInstances(state.coins, coins, 0.08);
+  updateWaveHud(state);
 
   if (enemyWasHit) {
     playSound("hit");
@@ -810,17 +939,9 @@ function renderState(state) {
 
   hpElement.textContent = player.hp;
   coinCountElement.textContent = player.coins;
-  const remainingSeconds = Math.max(0, 60 - state.elapsedSeconds);
-  const minutes = String(Math.floor(remainingSeconds / 60)).padStart(2, "0");
-  const seconds = String(remainingSeconds % 60).padStart(2, "0");
-  timerElement.textContent = `${minutes}:${seconds}`;
   hpProgressElement.style.setProperty("--progress", `${player.hp}%`);
   hpProgressElement.setAttribute("aria-valuenow", player.hp);
   healthElement.dataset.danger = player.hp <= 25;
-  roundProgressElement.style.setProperty(
-    "--progress",
-    `${(remainingSeconds / 60) * 100}%`,
-  );
   weaponElement.textContent = weaponStyles[player.weapon]?.label ?? "Pistol";
   weaponPanelElement.dataset.weapon = player.weapon;
   localPlayerAlive = player.hp > 0;
@@ -875,6 +996,11 @@ function connectSocket() {
   combo = 0;
   animatedEnemyIds = new Set();
   nextEnemyLodAt = 0;
+  previousWaveId = undefined;
+  previousGameStatus = undefined;
+  clearTimeout(announcementTimer);
+  announcementElement.hidden = true;
+  bossHealthElement.hidden = true;
   clearTimeout(comboTimer);
   comboElement.hidden = true;
   combatTextLayer.replaceChildren();
@@ -1015,13 +1141,36 @@ function animate() {
     if (!enemy.model) continue;
 
     enemy.model.position.copy(enemy.position);
-    setAnimation(enemy.model, moving ? "walking" : "idle");
+    const animationState =
+      enemy.kind === "boss"
+        ? enemy.bossState === "chase"
+          ? "walking"
+          : "idle"
+        : moving
+          ? "walking"
+          : "idle";
+    setAnimation(enemy.model, animationState);
     if (moving) {
       enemy.model.lookAt(
         enemy.targetPosition.x,
         enemy.model.position.y,
         enemy.targetPosition.z,
       );
+    }
+    if (enemy.kind === "boss") {
+      const attacking =
+        enemy.bossState === "attack1" || enemy.bossState === "attack2";
+      const pulse = attacking
+        ? 1 + Math.sin(performance.now() * 0.018) * 0.06
+        : 1;
+      enemy.model.scale
+        .copy(enemy.model.userData.baseScale)
+        .multiplyScalar(pulse);
+      const aura = enemy.model.getObjectByName("boss-aura");
+      if (aura) {
+        aura.rotation.z += visualDelta * (enemy.enraged ? 2.8 : 1.5);
+        aura.material.opacity = attacking ? 0.85 : enemy.enraged ? 0.7 : 0.45;
+      }
     }
     enemy.model.userData.animation.mixer.update(visualDelta);
   }

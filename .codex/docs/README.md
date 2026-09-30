@@ -27,14 +27,15 @@ The repository implements a small server-authoritative multiplayer survival game
 
 - Browser client built with Vite and Three.js.
 - Node.js WebSocket simulation using `ws`.
-- One in-memory room and a 60-second round.
+- One in-memory room with three timed waves followed by an untimed boss phase.
 - WASD movement with client prediction and server reconciliation.
 - Enemies, three server-authoritative weapons, automatic shooting, bullets,
   damage, coins, HUD, smoothed camera feedback, CC0 audio assets, a
   static low-poly environment, animated GLB player and near-enemy models,
   instanced distant-enemy/projectile/coin rendering, pooled particle VFX,
   server spatial indexing, critical hits, floating combat feedback, local kill
-  combos, latency display, and automatic socket reconnection.
+  combos, latency display, automatic socket reconnection, a server-owned wave
+  schedule, and a giant animated boss with telegraphed attack states.
 
 There is currently no database, persistence, authentication, room selection,
 session resume, physics engine, React UI, or deployment configuration.

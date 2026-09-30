@@ -93,11 +93,13 @@ The client keeps four stores keyed by authoritative ID:
 Players remain separate `SkeletonUtils.clone()` GLB objects because each owns
 an independent skeleton and `AnimationMixer`. Enemy store entries instead own
 their current/target positions independently of their visual representation.
-At most once per second, `selectNearestIds()` assigns animated rigs to the 24
-enemies nearest the authoritative local-player position; the rest use the
-baked-pose instance buffers. The slower rebalance avoids cloning churn near the
-cutoff. Promotion creates a rig at the interpolated position, while demotion
-stops/uncaches its mixer, disposes its skeleton texture, and removes the rig.
+At most once per second, `selectNearestIds()` assigns animated rigs to a
+24-enemy budget. A live boss always reserves one slot; the remaining slots go
+to normal enemies nearest the authoritative local-player position. Other
+normal enemies use baked-pose instance buffers. The slower rebalance avoids
+cloning churn near the cutoff. Promotion creates a rig at the interpolated
+position, while demotion stops/uncaches its mixer, disposes its skeleton
+texture, and removes the rig.
 
 Bullets and coins each use one shared `THREE.InstancedMesh`. Distant enemies
 use one `InstancedMesh` per original GLB submesh so the original materials are
@@ -119,11 +121,10 @@ bullet and coin stores:
 4. Optionally run an `onRemove` callback before removal for lifecycle VFX.
 
 Each bullet/coin group and each distant-enemy submesh buffer has a fixed
-capacity of 512. This is above the current 60-second round's practical entity
+capacity of 512. This is above the current wave schedule's practical entity
 load and keeps GPU buffers stable. Entities over the relevant ceiling remain
 authoritative on the server but are not rendered; increase or dynamically grow
-the capacity only when a larger room or longer round is introduced and
-profiled.
+the capacity only when a larger room or longer round is introduced and profiled.
 
 ## Player model and animation
 
@@ -144,11 +145,19 @@ The mixer for every player advances by frame delta each render frame.
 ## Enemy model and animation
 
 `/models/enemy.glb` is the Meshopt-compressed KayKit Skeleton Minion recorded in
-`public/models/README.md`. The nearest 24 enemies use `createEnemyModel()` to
-clone the rig and create independent actions for `Idle`,
+`public/models/README.md`. Selected enemies use `createEnemyModel()` to clone
+the rig and create independent actions for `Idle`,
 `Walking_D_Skeletons`, and `Death_C_Skeletons`. New animated enemies begin on a
 randomized walking phase so a crowd does not move in lockstep. They switch to
 idle when interpolation stops and turn toward their latest target while moving.
+
+The boss reuses that licensed rig instead of introducing another asset. Its
+clone is scaled to three times the normal rig (4.5 world units tall), receives
+independent dark-red/emissive material clones, and owns a rotating red ring.
+It is never demoted to a distant instance. Public `bossState` selects walking
+for `chase` and idle for telegraphs/cooldown; attack states also apply a small
+procedural scale pulse, with a faster/brighter ring while enraged. The server
+still owns every state transition and damage result.
 
 During boot, `createEnemyProxyMeshes()` applies the bind-pose bone transform to
 each skinned vertex, bakes the normalized world transform into float positions,
@@ -251,7 +260,8 @@ lets the client recognize local shots. Current effects:
 - New bullet: six weapon-colored particles at its spawn coordinate.
 - Every live bullet, every frame: one short-lived weapon-colored trail particle.
 - Removed bullet: five weapon-colored particles as a generic despawn effect.
-- Removed enemy: eighteen orange particles at its last visible position (death burst).
+- Removed normal enemy: eighteen orange particles at its last visible position.
+- Removed boss: 64 larger dark-red particles emitted higher on the giant rig.
 
 Particle effects for bullet/enemy removal are inferred from full snapshots.
 Bullet removal deliberately does not claim whether it hit or exhausted its
@@ -279,24 +289,25 @@ only after the first pointer or keyboard gesture to satisfy browser autoplay
 policy. `public/audio/CREDITS.md` records each source file and its CC0 license.
 
 Asset cues cover three distinct local gunshots, enemy hits/deaths, local
-damage, coin pickup, and weapon selection. Playback clones each SFX element so
-rapid shots can overlap. Shotgun pellets arriving in the same snapshot still
+damage, coin pickup, weapon selection, and wave transitions. Playback clones
+each SFX element so rapid shots can overlap. Shotgun pellets arriving in the same snapshot still
 produce one gunshot cue. Enemy HP changes and lifecycle removal come from full
 snapshots; coin and damage cues compare consecutive local-player snapshots.
-There is no level-up cue because the game has no level system.
 
 ## HUD
 
-`index.html` provides a responsive fixed overlay with HP and round progress
-bars, coin count, selected weapon and its Space key hint, remaining time,
-connection status, and round-trip latency. Low HP and weapon types receive
-distinct color treatments. The HP bar exposes native progressbar ARIA values;
-connection status remains an ARIA live region. Motion-heavy feedback respects
-the user's reduced-motion preference.
+`index.html` provides a responsive fixed overlay with HP and wave progress
+bars, coin count, selected weapon and its Space key hint, current wave/time,
+connection status, and round-trip latency. The boss phase adds an accessible
+3,000-HP bar and the public AI state. Wave changes animate an announcement;
+`victory` and `defeat` remain visible as result banners. Low HP and weapon
+types receive distinct color treatments. HP and boss bars expose native
+progressbar ARIA values; connection/result status remains live. Motion-heavy
+feedback respects the user's reduced-motion preference.
 
-The client updates it from the local authoritative player, snapshot clock, and
-combat events. There is currently no loading, victory, defeat, or dedicated
-reconnect screen.
+The client updates it from the local authoritative player, `wave`, `status`,
+enemy collection, and combat events. There is currently no loading or
+dedicated reconnect screen.
 
 ## Current limitations
 
@@ -305,6 +316,6 @@ reconnect screen.
 - Reconnect uses a fixed one-second retry rather than exponential backoff.
 - Reconnect creates a new player and does not resume identity or gameplay state.
 - Local and remote player models have the same appearance.
-- Player `Attack` and `Hit` clips and enemy hit/attack clips are not shipped or
-  driven because the protocol has no matching animation events.
+- Player `Attack` and `Hit` clips and enemy attack clips are not shipped. Boss
+  attack states therefore use idle plus procedural scale/aura telegraphs.
 - The muzzle flash starts at the bullet coordinate, not a weapon bone/socket.

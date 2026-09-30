@@ -16,7 +16,7 @@ Three.js client  <------ full state snapshots ------  Node.js WebSocket server
        +-- prediction and interpolation                          +-- enemies
                                                                 +-- bullets
                                                                 +-- coins
-                                                                +-- 60s clock
+                                                                +-- wave/boss state
 ```
 
 The client never submits authoritative positions, HP, coins, enemies, bullets,
@@ -42,11 +42,14 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 4. The server accepts the connection, resets the round only when this is the first connected player, creates the authoritative player, sends `init`, and sends an initial `state` snapshot. The client also starts periodic application-level ping requests.
 5. The client sends sequenced WASD intent at most once per 50 ms while keys are
    held, predicts that movement locally, and cycles weapon requests with Space.
-6. The server consumes at most one queued input per 50 ms tick, updates the world, and broadcasts full snapshots every 100 ms.
+6. The server consumes at most one queued input per 50 ms tick, advances the
+   timed wave/boss state, updates the world, and broadcasts full snapshots every
+   100 ms.
 7. The client ignores stale snapshots, removes acknowledged pending inputs,
    reapplies unacknowledged inputs, consumes new combat events for local damage,
    critical, and combo feedback, interpolates rendered entities, updates
-   animation/VFX/camera/HUD, and renders each animation frame.
+   animation/VFX/camera/HUD, including the always-rigged giant boss and its
+   public AI telegraphs, and renders each animation frame.
 8. On disconnect, the server removes that player. The client clears pending
    prediction and retries after one second. Reconnection creates a new player;
    it joins the existing round when others remain, or starts a new round when
@@ -58,10 +61,12 @@ weapon stats, or time. It submits movement and weapon-selection intent only.
 |---|---|
 | `server.js` | WebSocket server, authoritative state, game loop, validation, combat, spawning, collection. |
 | `src/main.js` | Scene setup, asset loading, network client, input prediction, reconciliation, interpolation, animation, VFX, camera, audio, rendering. |
+| `src/game-rules.js` | Data-driven wave schedule, boss tuning, and pure boss-state transitions used by the server. |
 | `src/instance-store.js` | Capacity-bounded lifecycle reconciliation for instanced dynamic entities. |
 | `src/performance.js` | Shared nearest-selection and spatial-grid helpers used by client render LOD and server simulation. |
 | `index.html` | Full-screen canvas host and DOM HUD. |
 | `test/multiplayer.test.js` | Server-authority, weapon steering/selection, movement acknowledgement, and shared-world integration test. |
+| `test/game-rules.test.js` | Wave-boundary and boss-state-machine tests. |
 | `test/instance-store.test.js` | Instance-store reuse, removal, and capacity test. |
 | `test/performance.test.js` | Nearest-enemy LOD selection and spatial-grid query tests. |
 | `public/models/player.glb` | Rigged RobotExpressive player asset served by Vite at `/models/player.glb`. |
@@ -117,16 +122,18 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Load each player/enemy GLB template once.
 - Clone every rendered rig with `SkeletonUtils.clone`, not `Object3D.clone`, so
   skeleton state is independent.
-- Each player and each of the nearest 24 enemies owns a separate
-  `AnimationMixer`; farther enemies use static baked-pose instances.
+- Each player and up to 24 enemies owns a separate `AnimationMixer`. The boss
+  always reserves one enemy rig slot; farther normal enemies use static
+  baked-pose instances.
 
 ### Bounded runtime work
 
 - Server input queues are capped at four entries per player.
 - Snapshots are skipped for a client whose WebSocket buffered amount is at least 64 KiB.
 - Bullets and coins use fixed 512-entry instance buffers.
-- At most 24 live enemies own animated rigs. Remaining enemies are packed into
-  fixed 512-entry baked-pose instance buffers, one buffer per source submesh.
+- At most 24 live enemies own animated rigs. The boss always consumes one of
+  those slots; remaining normal enemies are packed into fixed 512-entry
+  baked-pose instance buffers, one buffer per source submesh.
 - VFX reuse a fixed 512-particle buffer instead of allocating meshes continuously.
 - Enemy separation and local bullet-hit candidates come from a 1.25-unit server
   spatial grid rather than full enemy scans.
@@ -142,7 +149,8 @@ Changing one side without the other causes prediction drift and visible reconcil
 - Reconnect creates a new player; there is no identity or state resume protocol.
 - No physics engine, GPU-instanced skeletal animation, occlusion culling, or
   adaptive render quality.
-- Enemy render LOD is count-based: the nearest 24 rigs animate and the rest use
-  static instanced poses. The transition does not blend between representations.
+- Enemy render LOD is count-based: the boss plus the nearest normal enemies,
+  up to 24 total rigs, animate and the rest use static instanced poses. The
+  transition does not blend between representations.
 
 These are deliberate prototype constraints. Upgrade them only when the requested feature or measured load requires it.

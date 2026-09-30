@@ -15,7 +15,6 @@
 | `ENEMY_SEPARATION_RADIUS` | 1.25 units | Nearby-enemy radius used by separation steering. |
 | `ENEMY_SEPARATION_WEIGHT` | 1.5 | Relative strength of separation against player seeking. |
 | `MAP_LIMIT` | 9.5 | Clamp boundary on both X and Z. |
-| `GAME_DURATION_MS` | 60,000 ms | Round duration. |
 | `CRITICAL_CHANCE` | 15% | Chance for an authoritative bullet hit to be critical. |
 | `CRITICAL_MULTIPLIER` | 2× | Damage multiplier for a critical bullet hit. |
 | `MAX_COMBAT_EVENTS` | 64 | Recent damage events retained for client presentation. |
@@ -26,18 +25,20 @@ Four maps store the world by stable entity ID:
 
 - `players`: position, HP, coins, selected weapon, input queue/sequence state,
   and next shot time.
-- `enemies`: position, HP, and next allowed contact-damage time.
+- `enemies`: kind, position, HP/max HP, collision radius, speed, and AI state.
 - `bullets`: position, weapon, fixed direction, damage, speed, and remaining
   range.
 - `coins`: position; the coin ID reuses the defeated enemy ID.
 
-Round-level variables track start time, next spawn/snapshot time, entity and
-combat-event numbering, snapshot sequence, the previous tick time, and a
-bounded recent-combat-event list.
+Round-level variables track start/finish time, current wave, `active`/
+`victory`/`defeat` status, next spawn/snapshot time, entity and combat-event
+numbering, snapshot sequence, the previous tick time, and a bounded recent-
+combat-event list.
 
 ## Round reset
 
-`resetGame()` clears enemies, bullets, and coins; resets entity/snapshot counters; and starts a new 60-second clock.
+`resetGame()` clears enemies, bullets, and coins; resets entity/snapshot
+counters; marks the game active; starts the wave clock; and enters wave 1.
 
 It is called only when a connection arrives while `players.size === 0`. Existing players joining mid-round do not restart the clock or clear the world.
 
@@ -88,19 +89,23 @@ No connected players? stop this tick
 Process one queued input per player
         |
         v
-Round still under 60 seconds?
+Game active?
   | yes
-  +-- spawn enemy when due
-  +-- move enemies / apply contact damage
+  +-- defeat if every connected player is dead
+  +-- advance the data-driven wave / spawn when due
+  +-- move enemies / advance boss AI / apply damage
   +-- auto-shoot selected weapon
-  +-- move bullets / apply bullet damage / drop coins
+  +-- move bullets / apply bullet damage / resolve victory
   +-- collect coins
         |
         v
 Broadcast snapshot when due
 ```
 
-Player input remains processable after the 60-second gameplay window, but enemy, shooting, bullet, and coin systems stop updating. Snapshots continue so clients keep a consistent final world.
+Player input and snapshots continue after `victory` or `defeat`, but spawning,
+enemy AI, shooting, bullets, and coin collection stop updating. This preserves
+a stable final world without making the client authoritative. Public total and
+wave elapsed time also freeze at the terminal tick.
 
 ## Movement
 
@@ -114,13 +119,21 @@ position += normalizedInput * PLAYER_SPEED * 0.05
 
 Both axes are clamped to `[-MAP_LIMIT, MAP_LIMIT]`. A dead player acknowledges queued input but does not move.
 
-## Enemy spawning and AI
+## Wave schedule and enemy spawning
 
-When an active tick finds no enemies, it creates an opening wave of ten. The
-normal two-second spawn schedule runs independently; because it is immediately
-due after reset, the first active tick adds one scheduled enemy after that wave.
+`src/game-rules.js` is the data table for four phases. Wave 1 lasts 15 seconds,
+opens with four enemies, and spawns every 2.5 seconds. Wave 2 lasts 15 seconds,
+opens with six, and spawns every 1.8 seconds. Wave 3 lasts 20 seconds, opens
+with eight, and spawns every 1.2 seconds. At 50 seconds the untimed boss phase
+begins and normal scheduled spawning stops. Enemies that survived earlier
+waves remain alive.
 
-`spawnEnemy()` chooses one of four map sides and a random offset on the other axis. Each enemy starts with 30 HP.
+`waveAtElapsed()` derives the phase from authoritative elapsed time, while
+`enterWave()` applies each phase's one-time opening behavior. `spawnEnemy()`
+chooses one of four map sides and a random offset on the other axis. Every
+normal enemy starts with 30 HP.
+
+## Normal enemy AI
 
 `findNearest()` compares squared XZ distance and ignores targets whose HP is
 zero or below. Enemies use it to chase the nearest living player.
@@ -151,6 +164,30 @@ same map boundary as players.
 Within one unit, an enemy deals 10 damage at most once per second. Player HP is
 clamped to zero.
 
+## Boss AI
+
+The boss spawns once at `(0, -9.5)` with 3,000 HP, a 1.45-unit projectile
+hit radius, and a lower initial chase speed of 0.9 units/s. Its state machine is
+server-owned:
+
+```text
+idle -> chase -> attack1 -> attack2 -> cooldown -> chase
+                 ^                              |
+                 +------------------------------+
+```
+
+When HP first reaches 50%, any current state transitions to `enrage` for 1.2
+seconds and then returns to chase. Enrage persists as a modifier: chase speed
+becomes 1.35 units/s, attack damage is multiplied by 1.5, and cooldown duration
+is reduced to 65%.
+
+Chase enters `attack1` within 3.2 units. Attack 1 applies 22 radial damage in a
+3.4-unit radius at 55% of its 700 ms telegraph. Attack 2 follows and applies 14
+radial damage in a 5.2-unit radius at 55% of its 900 ms telegraph. Each attack
+can damage each living player once. `stateUntil`, `attackAt`, and
+`attackApplied` stay private; public snapshots expose only the presentation
+state and persistent enrage flag.
+
 ## Automatic shooting and bullets
 
 `WEAPONS` is the authoritative data table:
@@ -169,10 +206,12 @@ from -12.5° through +12.5° around the aim direction.
 
 Projectiles travel in their initial direction rather than homing. Each tick
 decrements remaining range by the distance moved. A projectile is deleted when
-it comes within 0.6 units of the nearest enemy or exhausts its range. On a hit,
+it enters an enemy's authoritative collision radius (0.6 for normal enemies,
+1.45 for the boss) or exhausts its range. On a hit,
 the server rolls a 15% critical chance. Normal hits apply base weapon damage;
-critical hits apply twice that amount. Zero enemy HP creates a coin and removes
-the enemy.
+critical hits apply twice that amount. A normal enemy death creates a coin. A
+boss death awards 25 coins directly to the projectile owner, removes the boss,
+and changes the game status to `victory`.
 
 Every hit appends a presentation event with a monotonic ID, owner, amount,
 critical/kill flags, and world position. Only the latest 64 events are retained.
@@ -190,7 +229,8 @@ Collection increments the authoritative `player.coins`, deletes the coin, and st
 `gameState()` returns the public state only. It deliberately excludes internal fields:
 
 - Player `inputQueue`, `lastReceivedInput`, and `nextShotAt` are private.
-- Enemy `nextDamageAt` is private.
+- Enemy `nextDamageAt`, movement speed, collision radius, and boss timing/
+  one-shot attack fields are private.
 - Bullet direction, damage, speed, and remaining range are private; clients
   receive only ID, weapon, and position.
 - `lastProcessedInput` remains public because the client needs it for reconciliation.
@@ -204,8 +244,9 @@ Numeric values are rounded to three decimal places during JSON serialization. Se
 
 - One shared room; every connection joins it.
 - No maximum player count, authentication, names, teams, or ownership metadata.
-- No explicit win/lose message.
-- No respawn or round restart while a player remains connected.
+- Win/lose state is a field in full snapshots rather than a reliable event.
+- No respawn or round restart while a player remains connected; joining an
+  already finished room does not restart it.
 - Combat events cover bullet damage and kills only. Generic projectile despawn
   and enemy death particles still come from entity lifecycle.
 - Nearest-player and automatic aim selection still use linear scans; these are
