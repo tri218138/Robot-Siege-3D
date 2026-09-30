@@ -1,6 +1,14 @@
 {
-  "name": "robot-three-js",
+  "name": "robot-survivor-threejs",
+  "description": "A multiplayer browser survival game built with Three.js and WebSockets as a personal learning project.",
   "private": true,
+  "keywords": [
+    "threejs",
+    "websocket",
+    "multiplayer",
+    "browser-game",
+    "survival-game"
+  ],
   "type": "module",
   "scripts": {
     "assets": "node scripts/build-assets.mjs",
